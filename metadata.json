@@ -1,0 +1,6 @@
+{
+  "name": "Text to Speech Studio",
+  "description": "A dark-mode Text to Speech application with voice and style customization, audio waveform visualization, audio downloads, and SQLite history storage.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
