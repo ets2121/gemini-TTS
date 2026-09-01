@@ -3,37 +3,22 @@
 import React, { useState, useEffect } from 'react';
 import {
   Mic,
-  Volume2,
   Sparkles,
-  SlidersHorizontal,
-  RotateCcw,
   Trash2,
   Copy,
   Check,
   Database,
   Radio,
   Wand2,
-  PlayCircle,
-  Save,
-  CheckCircle2,
   Cpu,
-  Zap,
-  Layers,
-  Search,
-  Filter,
-  ChevronRight,
   PanelRightClose,
   PanelRightOpen,
-  History as HistoryIcon,
   ChevronDown,
-  ShieldCheck,
   Clock,
   AlertCircle,
-  Play,
-  Square,
   Loader2,
 } from 'lucide-react';
-import { VOICES, VoiceOption, clearAllVoicePreviewsCache } from '@/components/VoiceCard';
+import { VOICES, VoiceOption } from '@/components/VoiceCard';
 import { VoiceSelectModal } from '@/components/VoiceSelectModal';
 import { StylePresetModal } from '@/components/StylePresetModal';
 import { ModelSelectModal } from '@/components/ModelSelectModal';
@@ -84,7 +69,6 @@ export default function Home() {
   const [autoPlay, setAutoPlay] = useState<boolean>(true);
   const [downloadFormat, setDownloadFormat] = useState<'mp3' | 'wav'>('mp3');
   const [isInitialized, setIsInitialized] = useState<boolean>(false);
-  const [lastSavedTime, setLastSavedTime] = useState<string>('');
 
   // Modals state
   const [isVoiceModalOpen, setIsVoiceModalOpen] = useState<boolean>(false);
@@ -241,10 +225,6 @@ export default function Home() {
         downloadFormat,
         lastTextDraft: text,
       });
-      const now = new Date();
-      setLastSavedTime(
-        now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-      );
     }, 400);
 
     return () => clearTimeout(timeoutId);
