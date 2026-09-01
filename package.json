@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "clean": "next clean",
     "electron:dev": "npm run build && node scripts/copy-static.mjs && electron .",
-    "electron:build": "powershell -ExecutionPolicy Bypass -File scripts/build-electron.ps1"
+    "electron:build": "powershell -ExecutionPolicy Bypass -File scripts/build-electron.ps1",
+    "electron:publish": "powershell -ExecutionPolicy Bypass -File scripts/build-electron.ps1 -Publish"
   },
   "dependencies": {
     "electron-updater": "^6.6.2"

@@ -3,14 +3,13 @@
 #  Full production build → .exe installer
 #
 #  Usage:
-#    npm run electron:build
-#    # or directly:
-#    powershell -ExecutionPolicy Bypass -File scripts\build-electron.ps1
-#
-#  To also PUBLISH to GitHub Releases, set GH_TOKEN first:
-#    $env:GH_TOKEN = "ghp_xxxx..."
-#    npm run electron:build
+#    npm run electron:build          # Local .exe build only
+#    npm run electron:publish        # Build & publish to GitHub Releases
 # ============================================================
+
+param(
+  [switch]$Publish
+)
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot   # project root
@@ -20,6 +19,16 @@ Write-Host "══════════════════════�
 Write-Host "  AI TTS Generator — Electron Build Pipeline" -ForegroundColor Cyan
 Write-Host "══════════════════════════════════════════════════" -ForegroundColor Cyan
 Write-Host ""
+
+# ── Load GH_TOKEN from .env if not already in environment ───
+if (-not $env:GH_TOKEN -and (Test-Path "$root\.env")) {
+  Get-Content "$root\.env" | ForEach-Object {
+    if ($_ -match '^\s*GH_TOKEN\s*=\s*["'']?([^"'']+)["'']?') {
+      $env:GH_TOKEN = $matches[1].Trim()
+      Write-Host "🔑  Loaded GH_TOKEN from .env" -ForegroundColor Green
+    }
+  }
+}
 
 # ── Step 1: Next.js standalone build ────────────────────────
 Write-Host "▶  [1/4] Building Next.js (standalone)..." -ForegroundColor Yellow
@@ -43,8 +52,16 @@ Write-Host "   ✅  Done." -ForegroundColor Green
 
 # ── Step 4: electron-builder packaging ──────────────────────
 Write-Host ""
-Write-Host "▶  [4/4] Packaging with electron-builder..." -ForegroundColor Yellow
-npx electron-builder --win --x64
+if ($Publish) {
+  if (-not $env:GH_TOKEN) {
+    Write-Host "⚠️  Warning: GH_TOKEN is not set in environment or .env. Publishing might fail." -ForegroundColor Red
+  }
+  Write-Host "▶  [4/4] Packaging & Publishing to GitHub Releases..." -ForegroundColor Yellow
+  npx electron-builder --win --x64 --publish always
+} else {
+  Write-Host "▶  [4/4] Packaging with electron-builder (local installer)..." -ForegroundColor Yellow
+  npx electron-builder --win --x64
+}
 if ($LASTEXITCODE -ne 0) { throw "electron-builder failed" }
 
 # ── Done ────────────────────────────────────────────────────
