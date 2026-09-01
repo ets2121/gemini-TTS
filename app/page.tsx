@@ -479,7 +479,7 @@ export default function Home() {
             <div className="flex items-center gap-2">
               <h1 className="text-sm font-bold tracking-tight text-white">AI TTS Generator</h1>
               <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-teal-950/80 text-teal-300 border border-teal-500/30">
-                v1.0.4
+                v1.0.5
               </span>
             </div>
             <p className="text-[10px] text-gray-400 hidden sm:block">
