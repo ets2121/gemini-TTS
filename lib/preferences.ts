@@ -5,6 +5,7 @@
 export interface TTSUserPreferences {
   voiceId: string;
   voiceStyle: string;
+  selectedModel?: string;
   pitch: number;
   speed: number;
   autoPlay: boolean;
@@ -17,6 +18,7 @@ const STORAGE_KEY = 'tts_studio_user_preferences_v1';
 export const DEFAULT_PREFERENCES: TTSUserPreferences = {
   voiceId: 'Kore',
   voiceStyle: 'warm, articulate, confident',
+  selectedModel: 'gemini-3.1-flash-tts-preview',
   pitch: 1.0,
   speed: 1.0,
   autoPlay: true,

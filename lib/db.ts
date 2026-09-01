@@ -11,6 +11,7 @@ export interface TTSHistoryItem {
   voice_name: string;
   voice_gender: string;
   voice_style: string;
+  model_name?: string;
   pitch: number;
   speed: number;
   audio_base64: string;
@@ -142,6 +143,7 @@ export async function insertHistoryItem(item: TTSHistoryItem): Promise<void> {
     ...item,
     voice_gender: item.voice_gender || 'Neutral',
     voice_style: item.voice_style || '',
+    model_name: item.model_name || 'gemini-3.1-flash-tts-preview',
     pitch: typeof item.pitch === 'number' ? item.pitch : 1.0,
     speed: typeof item.speed === 'number' ? item.speed : 1.0,
     audio_mime_type: item.audio_mime_type || 'audio/wav',

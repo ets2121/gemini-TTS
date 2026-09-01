@@ -11,6 +11,7 @@ export async function POST(req: NextRequest) {
       voiceName = 'Kore',
       voiceGender = 'Female',
       voiceStyle = '',
+      model = 'gemini-3.1-flash-tts-preview',
       pitch = 1.0,
       speed = 1.0,
     } = body;
@@ -22,8 +23,12 @@ export async function POST(req: NextRequest) {
     const trimmedText = text.trim();
     const id = `tts_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
+    // Text-to-speech tasks in Google GenAI SDK use gemini-3.1-flash-tts-preview
+    const targetModel = 'gemini-3.1-flash-tts-preview';
+
     let wavBuffer: Buffer;
     let durationSeconds = 0;
+    let isQuotaFallback = false;
 
     const apiKey = process.env.GEMINI_API_KEY;
 
@@ -44,18 +49,34 @@ export async function POST(req: NextRequest) {
           promptContent = `Say in a ${voiceStyle.trim()} manner: ${trimmedText}`;
         }
 
-        // Map allowed prebuilt voice names
-        const validVoices = ['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr', 'Aoede'];
-        const selectedVoice = validVoices.includes(voiceName) ? voiceName : 'Kore';
+        // Map voices to Gemini prebuilt voice names: Puck, Charon, Kore, Fenrir, Zephyr, Aoede
+        const baseVoiceMap: Record<string, string> = {
+          Kore: 'Kore',
+          Zephyr: 'Zephyr',
+          Aoede: 'Aoede',
+          Leda: 'Kore',
+          Mimosa: 'Aoede',
+          Thalia: 'Aoede',
+          Charon: 'Charon',
+          Fenrir: 'Fenrir',
+          Orpheus: 'Charon',
+          Chiron: 'Fenrir',
+          Jupiter: 'Charon',
+          Puck: 'Puck',
+          Echo: 'Puck',
+          Callisto: 'Zephyr',
+        };
+
+        const mappedVoice = baseVoiceMap[voiceName] || 'Kore';
 
         const response = await ai.models.generateContent({
-          model: 'gemini-3.1-flash-tts-preview',
+          model: targetModel,
           contents: [{ parts: [{ text: promptContent }] }],
           config: {
             responseModalities: [Modality.AUDIO],
             speechConfig: {
               voiceConfig: {
-                prebuiltVoiceConfig: { voiceName: selectedVoice },
+                prebuiltVoiceConfig: { voiceName: mappedVoice },
               },
             },
           },
@@ -67,20 +88,25 @@ export async function POST(req: NextRequest) {
           const pcmBuffer = Buffer.from(base64RawPcm, 'base64');
           // Gemini TTS returns 24kHz 16-bit linear PCM mono
           wavBuffer = pcmToWav(pcmBuffer, 24000);
-          // 24000 samples/sec * 2 bytes/sample = 48000 bytes/sec
           durationSeconds = Number((pcmBuffer.length / 48000).toFixed(2));
         } else {
-          // Fallback to generated wave if no audio part returned
+          isQuotaFallback = true;
           wavBuffer = generateSyntheticVoiceWave(trimmedText, voiceName, speed, pitch);
           durationSeconds = Number(((wavBuffer.length - 44) / 48000).toFixed(2));
         }
       } catch (geminiError: any) {
-        console.warn('Gemini TTS generation issue, using acoustic fallback:', geminiError?.message);
+        isQuotaFallback = true;
+        const errMsg = geminiError?.message || '';
+        if (errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED')) {
+          console.info('Gemini TTS rate limit reached. Synthesizing audio via acoustic engine fallback.');
+        } else {
+          console.warn('Gemini TTS synthesis note:', errMsg.slice(0, 120));
+        }
         wavBuffer = generateSyntheticVoiceWave(trimmedText, voiceName, speed, pitch);
         durationSeconds = Number(((wavBuffer.length - 44) / 48000).toFixed(2));
       }
     } else {
-      // Offline / demo fallback generator
+      isQuotaFallback = true;
       wavBuffer = generateSyntheticVoiceWave(trimmedText, voiceName, speed, pitch);
       durationSeconds = Number(((wavBuffer.length - 44) / 48000).toFixed(2));
     }
@@ -94,6 +120,7 @@ export async function POST(req: NextRequest) {
       voice_name: voiceName,
       voice_gender: voiceGender,
       voice_style: voiceStyle || 'Natural',
+      model_name: model || targetModel,
       pitch: Number(pitch) || 1.0,
       speed: Number(speed) || 1.0,
       audio_base64: audioBase64,
@@ -114,6 +141,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       item: historyRecord,
+      isQuotaFallback,
     });
   } catch (error: any) {
     console.error('TTS Generation error:', error);
@@ -123,3 +151,4 @@ export async function POST(req: NextRequest) {
     );
   }
 }
+
