@@ -7,6 +7,7 @@ import {
   saveStoredVoicePreview,
   clearStoredVoicePreviews,
 } from '@/lib/db';
+import { checkModelRateLimit } from '@/lib/rateLimit';
 
 // Sample preview script for each voice persona
 const VOICE_PREVIEWS: Record<string, string> = {
@@ -64,7 +65,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { voiceName = 'Kore', forceRefresh = false, resetAll = false } = body;
+    const { voiceName = 'Kore', model = 'gemini-3.1-flash-tts-preview', forceRefresh = false, resetAll = false } = body;
 
     if (resetAll) {
       await clearStoredVoicePreviews();
@@ -78,7 +79,7 @@ export async function POST(req: NextRequest) {
       VOICE_PREVIEWS[voiceName] ||
       `Hello! I am ${voiceName}, ready to bring your speech synthesis projects to life.`;
 
-    // Check persistent file cache first
+    // Check persistent file cache first (0ms latency, does not consume RPM)
     if (!forceRefresh) {
       const cached = await getStoredVoicePreview(voiceName);
       if (cached && cached.audioBase64) {
@@ -92,6 +93,23 @@ export async function POST(req: NextRequest) {
           cached: true,
         });
       }
+    }
+
+    const targetModel = model || 'gemini-3.1-flash-tts-preview';
+
+    // ── Enforce 2 RPM Limit on Live Preview Generation ────────────────────────
+    const rateCheck = checkModelRateLimit(targetModel, true);
+    if (!rateCheck.allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Rate Limit: Max 2 RPM reached. Voice preview generation is on cooldown for ${rateCheck.retryAfterSeconds}s.`,
+          code: 'RPM_COOLDOWN',
+          retryAfter: rateCheck.retryAfterSeconds,
+          rpmStatus: rateCheck,
+        },
+        { status: 429 }
+      );
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
@@ -108,7 +126,6 @@ export async function POST(req: NextRequest) {
     }
 
     const mappedVoice = BASE_VOICE_MAP[voiceName] || 'Kore';
-    const targetModel = 'gemini-3.1-flash-tts-preview';
 
     const ai = new GoogleGenAI({
       apiKey: apiKey.trim(),
@@ -150,6 +167,7 @@ export async function POST(req: NextRequest) {
             success: false,
             error: 'Gemini Rate Limit Exceeded. Please wait a moment before previewing voices.',
             code: 'RATE_LIMIT',
+            rpmStatus: rateCheck,
           },
           { status: 429 }
         );
@@ -212,6 +230,7 @@ export async function POST(req: NextRequest) {
       durationSeconds: finalDuration,
       sampleText: previewText,
       cached: false,
+      rpmStatus: rateCheck,
     });
   } catch (error: any) {
     console.error('Voice preview fatal error:', error);

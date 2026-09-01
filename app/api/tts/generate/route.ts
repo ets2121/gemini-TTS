@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI, Modality } from '@google/genai';
 import { pcmToWav } from '@/lib/audio';
 import { insertHistoryItem, TTSHistoryItem } from '@/lib/db';
+import { checkModelRateLimit } from '@/lib/rateLimit';
 
 // Official prebuilt Gemini TTS voice mapping
 const BASE_VOICE_MAP: Record<string, string> = {
@@ -55,6 +56,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const targetModel = model || 'gemini-3.1-flash-tts-preview';
+
+    // ── Enforce 2 RPM Limit Per Model ──────────────────────────────────────────
+    const rateCheck = checkModelRateLimit(targetModel, true);
+    if (!rateCheck.allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Rate Limit: Maximum 2 generation requests per minute (2 RPM) reached for this model. Please wait ${rateCheck.retryAfterSeconds}s before generating.`,
+          code: 'RPM_COOLDOWN',
+          retryAfter: rateCheck.retryAfterSeconds,
+          rpmStatus: rateCheck,
+        },
+        { status: 429 }
+      );
+    }
+
     const ai = new GoogleGenAI({
       apiKey: apiKey.trim(),
       httpOptions: {
@@ -71,7 +89,6 @@ export async function POST(req: NextRequest) {
     }
 
     const mappedVoice = BASE_VOICE_MAP[voiceName] || 'Kore';
-    const targetModel = model || 'gemini-3.1-flash-tts-preview';
 
     let base64RawPcm: string | undefined;
 
@@ -104,6 +121,7 @@ export async function POST(req: NextRequest) {
             success: false,
             error: 'Gemini Rate Limit / Quota Exceeded. You have reached the request limit for your API key. Please wait a moment before trying again.',
             code: 'RATE_LIMIT',
+            rpmStatus: rateCheck,
           },
           { status: 429 }
         );
@@ -178,6 +196,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       item: historyRecord,
+      rpmStatus: rateCheck,
     });
   } catch (error: any) {
     console.error('TTS Generation fatal error:', error);
