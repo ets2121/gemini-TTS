@@ -37,7 +37,6 @@ import { VOICES, VoiceOption, clearAllVoicePreviewsCache } from '@/components/Vo
 import { VoiceSelectModal } from '@/components/VoiceSelectModal';
 import { StylePresetModal } from '@/components/StylePresetModal';
 import { ModelSelectModal } from '@/components/ModelSelectModal';
-import { ProgressIndicator } from '@/components/ProgressIndicator';
 import { AudioPlayerBar } from '@/components/AudioPlayerBar';
 import { HistoryDrawer } from '@/components/HistoryDrawer';
 import { TTSHistoryItem } from '@/lib/db';
@@ -92,9 +91,10 @@ export default function Home() {
   const [isStyleModalOpen, setIsStyleModalOpen] = useState<boolean>(false);
   const [isModelModalOpen, setIsModelModalOpen] = useState<boolean>(false);
 
-  // Rate Limiting & Cooldown State (2 RPM Sliding Window)
-  const [requestTimestamps, setRequestTimestamps] = useState<number[]>([]);
-  const [cooldownRemaining, setCooldownRemaining] = useState<number>(0);
+  // ── 2 RPM 1-Minute Window State & Live Countdown Engine ─────────────────────
+  const [usedCount, setUsedCount] = useState<number>(0);
+  const [windowExpiresAt, setWindowExpiresAt] = useState<number>(0);
+  const [windowSecondsRemaining, setWindowSecondsRemaining] = useState<number>(0);
 
   // Voice Card Audio Preview State
   const [currentlyPlayingVoiceId, setCurrentlyPlayingVoiceId] = useState<string | null>(null);
@@ -124,37 +124,50 @@ export default function Home() {
   // UI state
   const [copiedText, setCopiedText] = useState<boolean>(false);
 
-  // ── 2 RPM Sliding Window Timer Engine ──────────────────────────────────────
+  // ── Live 1-Minute Countdown Window Ticker ──────────────────────────────────
   useEffect(() => {
     const timer = setInterval(() => {
-      const now = Date.now();
-      const active = requestTimestamps.filter((t) => now - t < 60000);
-
-      if (active.length !== requestTimestamps.length) {
-        setRequestTimestamps(active);
-      }
-
-      if (active.length >= 2) {
-        const oldest = active[0];
-        const remaining = Math.max(0, Math.ceil((oldest + 60000 - now) / 1000));
-        setCooldownRemaining(remaining);
+      if (windowExpiresAt > 0) {
+        const now = Date.now();
+        const diff = Math.max(0, Math.ceil((windowExpiresAt - now) / 1000));
+        if (diff <= 0) {
+          // 1 minute has passed -> auto reset quota to 0 used (2/2 available)
+          setUsedCount(0);
+          setWindowExpiresAt(0);
+          setWindowSecondsRemaining(0);
+        } else {
+          setWindowSecondsRemaining(diff);
+        }
       } else {
-        setCooldownRemaining(0);
+        if (usedCount !== 0) setUsedCount(0);
+        if (windowSecondsRemaining !== 0) setWindowSecondsRemaining(0);
       }
-    }, 500);
+    }, 250);
 
     return () => clearInterval(timer);
-  }, [requestTimestamps]);
+  }, [windowExpiresAt, usedCount, windowSecondsRemaining]);
 
-  const recordRpmHit = () => {
+  // Called when output is received from server (after generation or preview)
+  const recordRpmHit = (serverStatus?: any) => {
     const now = Date.now();
-    const active = requestTimestamps.filter((t) => now - t < 60000);
-    const updated = [...active, now];
-    setRequestTimestamps(updated);
-    if (updated.length >= 2) {
-      const oldest = updated[0];
-      const remaining = Math.max(0, Math.ceil((oldest + 60000 - now) / 1000));
-      setCooldownRemaining(remaining);
+    if (serverStatus && typeof serverStatus.windowSecondsRemaining === 'number') {
+      const remainingSec = serverStatus.windowSecondsRemaining;
+      setWindowExpiresAt(now + remainingSec * 1000);
+      setUsedCount(serverStatus.usedCount || Math.min(2, usedCount + 1));
+      setWindowSecondsRemaining(remainingSec);
+      return;
+    }
+
+    if (usedCount === 0 || now >= windowExpiresAt) {
+      // 1st request -> start 60s countdown window!
+      setWindowExpiresAt(now + 60000);
+      setUsedCount(1);
+      setWindowSecondsRemaining(60);
+    } else {
+      // 2nd request in active window -> limit reached for remaining seconds of this window
+      setUsedCount(2);
+      const remaining = Math.max(0, Math.ceil((windowExpiresAt - now) / 1000));
+      setWindowSecondsRemaining(remaining);
     }
   };
 
@@ -302,6 +315,8 @@ export default function Home() {
     }
   };
 
+  const isBlocked = usedCount >= 2 && windowSecondsRemaining > 0;
+
   // Handle Speech Generation
   const handleGenerateSpeech = async () => {
     if (!text.trim()) {
@@ -309,10 +324,10 @@ export default function Home() {
       return;
     }
 
-    if (cooldownRemaining > 0) {
+    if (isBlocked) {
       showErrorToast(
-        'Rate Limit Cooldown Active',
-        `Please wait ${cooldownRemaining}s before generating to stay within the 2 RPM limit.`
+        'Rate Limit Reached',
+        `2 generations have already been used in this 1-minute window. Please wait ${windowSecondsRemaining}s before generating.`
       );
       return;
     }
@@ -340,8 +355,12 @@ export default function Home() {
       if (!response.ok || !data.success) {
         const errorText = data.error || 'Failed to synthesize audio with Gemini TTS.';
         if (response.status === 429 || data.code === 'RPM_COOLDOWN' || data.code === 'RATE_LIMIT') {
-          if (data.retryAfter) {
-            setCooldownRemaining(data.retryAfter);
+          if (data.rpmStatus) {
+            recordRpmHit(data.rpmStatus);
+          } else if (data.retryAfter) {
+            setWindowExpiresAt(Date.now() + data.retryAfter * 1000);
+            setUsedCount(2);
+            setWindowSecondsRemaining(data.retryAfter);
           }
           showRateLimitToast(data.retryAfter || 60, false);
         } else if (response.status === 401 || data.code === 'API_KEY_MISSING' || data.code === 'INVALID_API_KEY') {
@@ -353,8 +372,8 @@ export default function Home() {
         return;
       }
 
-      // Record successful RPM hit
-      recordRpmHit();
+      // Voice output responded successfully! Start/update 1-minute countdown window
+      recordRpmHit(data.rpmStatus);
 
       showSuccessToast(
         'Speech Synthesis Complete',
@@ -423,7 +442,7 @@ export default function Home() {
       return;
     }
     try {
-      const res = await fetch('/api/tts/history', {
+      const res = await fetch(`/api/tts/history`, {
         method: 'DELETE',
       });
       if (res.ok) {
@@ -447,8 +466,6 @@ export default function Home() {
     TTS_MODELS.find((m) => m.id === selectedModel) || TTS_MODELS[0];
   const charCount = text.length;
   const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
-  const isCooldownActive = cooldownRemaining > 0;
-  const activeRequestsInWindow = requestTimestamps.filter((t) => Date.now() - t < 60000).length;
 
   return (
     <main className="min-h-screen bg-[#0A0A0D] text-gray-100 flex flex-col font-sans selection:bg-teal-500 selection:text-black">
@@ -462,7 +479,7 @@ export default function Home() {
             <div className="flex items-center gap-2">
               <h1 className="text-sm font-bold tracking-tight text-white">AI TTS Generator</h1>
               <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-teal-950/80 text-teal-300 border border-teal-500/30">
-                v1.0.3
+                v1.0.4
               </span>
             </div>
             <p className="text-[10px] text-gray-400 hidden sm:block">
@@ -471,24 +488,26 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Header Right: RPM Status Shield, Settings & History Drawer Toggle */}
+        {/* Header Right: Live RPM Window Badge & History Drawer Toggle */}
         <div className="flex items-center gap-2.5">
-          {/* Live RPM Cooldown Shield Badge */}
+          {/* Live RPM 1-Minute Window Badge */}
           <div
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs border font-medium transition-all ${
-              isCooldownActive
-                ? 'bg-rose-950/40 border-rose-500/40 text-rose-300 animate-pulse'
-                : activeRequestsInWindow === 1
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs border font-medium transition-all ${
+              isBlocked
+                ? 'bg-rose-950/40 border-rose-500/50 text-rose-300 animate-pulse'
+                : usedCount === 1
                 ? 'bg-amber-950/30 border-amber-500/40 text-amber-300'
                 : 'bg-[#14141C] border-[#262632] text-teal-400'
             }`}
-            title="Model rate limit: 2 requests per minute"
+            title="Max 2 generations per 1-minute window"
           >
-            <Clock className="w-3.5 h-3.5" />
+            <Clock className="w-3.5 h-3.5 shrink-0" />
             <span className="font-mono text-[11px]">
-              {isCooldownActive
-                ? `Cooldown: ${cooldownRemaining}s`
-                : `${2 - activeRequestsInWindow}/2 RPM Available`}
+              {isBlocked
+                ? `2/2 Used • Cooldown: ${windowSecondsRemaining}s`
+                : usedCount === 1
+                ? `1/2 Used • Resets in ${windowSecondsRemaining}s`
+                : '2/2 Generations Available'}
             </span>
           </div>
 
@@ -533,7 +552,7 @@ export default function Home() {
           {/* Main TTS Workstation */}
           <div className={`${isHistoryOpen ? 'lg:col-span-7 xl:col-span-8 2xl:col-span-9' : 'w-full'} min-w-0 space-y-4`}>
             
-            {/* Quick Config Selector Bar (3 Clean Action Cards) */}
+            {/* Quick Config Selector Bar (3 Clean Action Cards that open dedicated Modals) */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {/* 1. Voice Persona Selector Card */}
               <div
@@ -761,15 +780,15 @@ export default function Home() {
               </div>
             )}
 
-            {/* Generate Action Area with 2 RPM Cooldown Visual Timer */}
+            {/* Generate Action Area with Live 1-Minute Window Countdown Timer */}
             <div className="space-y-2.5">
               <button
                 type="button"
                 id="generate-speech-btn"
                 onClick={handleGenerateSpeech}
-                disabled={isGenerating || isCooldownActive || !text.trim()}
+                disabled={isGenerating || isBlocked || !text.trim()}
                 className={`w-full py-4 px-6 rounded-2xl font-bold text-sm tracking-wide transition-all duration-300 shadow-xl flex items-center justify-center gap-2.5 ${
-                  isCooldownActive
+                  isBlocked
                     ? 'bg-rose-900/30 border border-rose-500/40 text-rose-300 cursor-not-allowed shadow-none'
                     : isGenerating || !text.trim()
                     ? 'bg-[#1A1A24] border border-[#2A2A38] text-gray-500 cursor-not-allowed shadow-none'
@@ -781,10 +800,15 @@ export default function Home() {
                     <Loader2 className="w-5 h-5 animate-spin" />
                     <span>Synthesizing Neural Speech...</span>
                   </>
-                ) : isCooldownActive ? (
+                ) : isBlocked ? (
                   <>
                     <Clock className="w-5 h-5 animate-spin text-rose-400" />
-                    <span>Rate Limit Cooldown Active: {cooldownRemaining}s remaining (2 RPM Limit)</span>
+                    <span>Rate Limit Reached: Cooldown {windowSecondsRemaining}s remaining (2/2 Used)</span>
+                  </>
+                ) : usedCount === 1 ? (
+                  <>
+                    <Sparkles className="w-5 h-5" />
+                    <span>Generate Neural Speech ({selectedVoice.name}) • 1 slot left ({windowSecondsRemaining}s)</span>
                   </>
                 ) : (
                   <>
@@ -794,12 +818,16 @@ export default function Home() {
                 )}
               </button>
 
-              {/* Animated Cooldown Bar */}
-              {isCooldownActive && (
-                <div className="w-full bg-[#181822] rounded-full h-1.5 overflow-hidden border border-[#282838]">
+              {/* Animated Window Progress Bar (Active whenever 1st or 2nd request is made) */}
+              {windowSecondsRemaining > 0 && (
+                <div className="w-full bg-[#181822] rounded-full h-2 overflow-hidden border border-[#282838]">
                   <div
-                    className="bg-gradient-to-r from-rose-500 to-amber-500 h-full transition-all duration-1000 ease-linear rounded-full"
-                    style={{ width: `${Math.min(100, (cooldownRemaining / 60) * 100)}%` }}
+                    className={`h-full transition-all duration-300 ease-linear rounded-full ${
+                      isBlocked
+                        ? 'bg-gradient-to-r from-rose-500 to-amber-500 animate-pulse'
+                        : 'bg-gradient-to-r from-teal-500 to-amber-400'
+                    }`}
+                    style={{ width: `${Math.min(100, (windowSecondsRemaining / 60) * 100)}%` }}
                   />
                 </div>
               )}
@@ -870,7 +898,9 @@ export default function Home() {
         currentlyPlayingVoiceId={currentlyPlayingVoiceId}
         onStartPlayPreview={setCurrentlyPlayingVoiceId}
         onStopPlayPreview={() => setCurrentlyPlayingVoiceId(null)}
-        isRpmCoolingDown={isCooldownActive}
+        isRpmCoolingDown={isBlocked}
+        secondsRemaining={windowSecondsRemaining}
+        onRecordRpmHit={recordRpmHit}
       />
 
       <StylePresetModal

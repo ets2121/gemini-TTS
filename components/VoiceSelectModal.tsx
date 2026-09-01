@@ -12,6 +12,8 @@ import {
   Loader2,
   Check,
   RotateCcw,
+  Clock,
+  AlertCircle,
 } from 'lucide-react';
 import { VOICES, VoiceOption } from '@/components/VoiceCard';
 
@@ -24,6 +26,8 @@ interface VoiceSelectModalProps {
   onStartPlayPreview: (voiceId: string) => void;
   onStopPlayPreview: () => void;
   isRpmCoolingDown?: boolean;
+  secondsRemaining?: number;
+  onRecordRpmHit?: (rpmStatus?: any) => void;
 }
 
 export const VoiceSelectModal: React.FC<VoiceSelectModalProps> = ({
@@ -35,10 +39,13 @@ export const VoiceSelectModal: React.FC<VoiceSelectModalProps> = ({
   onStartPlayPreview,
   onStopPlayPreview,
   isRpmCoolingDown = false,
+  secondsRemaining = 0,
+  onRecordRpmHit,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedGender, setSelectedGender] = useState<'All' | 'Female' | 'Male' | 'Neutral'>('All');
   const [loadingVoiceId, setLoadingVoiceId] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   const filteredVoices = useMemo(() => {
     return VOICES.filter((voice) => {
@@ -61,6 +68,7 @@ export const VoiceSelectModal: React.FC<VoiceSelectModalProps> = ({
 
   const handlePreview = async (e: React.MouseEvent, voice: VoiceOption) => {
     e.stopPropagation();
+    setPreviewError(null);
 
     if (currentlyPlayingVoiceId === voice.id) {
       onStopPlayPreview();
@@ -77,15 +85,27 @@ export const VoiceSelectModal: React.FC<VoiceSelectModalProps> = ({
       const data = await res.json();
       setLoadingVoiceId(null);
 
-      if (data.success && data.audioBase64) {
+      if (!res.ok || !data.success) {
+        setPreviewError(data.error || 'Rate limit reached. Please wait for cooldown.');
+        onStopPlayPreview();
+        return;
+      }
+
+      // If fresh generation happened (not from cache), record RPM usage on client
+      if (!data.cached && onRecordRpmHit) {
+        onRecordRpmHit(data.rpmStatus);
+      }
+
+      if (data.audioBase64) {
         const audio = new Audio(`data:audio/wav;base64,${data.audioBase64}`);
         audio.onended = () => onStopPlayPreview();
         audio.onerror = () => onStopPlayPreview();
         onStartPlayPreview(voice.id);
         audio.play().catch(() => onStopPlayPreview());
       }
-    } catch {
+    } catch (err: any) {
       setLoadingVoiceId(null);
+      setPreviewError(err?.message || 'Failed to load preview');
       onStopPlayPreview();
     }
   };
@@ -100,12 +120,17 @@ export const VoiceSelectModal: React.FC<VoiceSelectModalProps> = ({
               <Mic className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                Voice Catalog
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-white">Voice Catalog</h2>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-[#20202C] text-teal-300 font-mono">
-                  {VOICES.length} Studio Personas
+                  {VOICES.length} Personas
                 </span>
-              </h2>
+                {isRpmCoolingDown && (
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-rose-950/60 text-rose-300 border border-rose-500/40 flex items-center gap-1">
+                    <Clock className="w-3 h-3" /> Cooldown: {secondsRemaining}s
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-gray-400">
                 Select a neural voice persona for your speech generation
               </p>
@@ -118,6 +143,14 @@ export const VoiceSelectModal: React.FC<VoiceSelectModalProps> = ({
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Error Alert */}
+        {previewError && (
+          <div className="px-6 py-2 bg-rose-950/40 border-b border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+            <span>{previewError}</span>
+          </div>
+        )}
 
         {/* Filters & Search */}
         <div className="p-4 border-b border-[#1E1E28] bg-[#0E0E13] flex flex-col sm:flex-row gap-3 items-center justify-between">

@@ -64,9 +64,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: `Rate Limit: Maximum 2 generation requests per minute (2 RPM) reached for this model. Please wait ${rateCheck.retryAfterSeconds}s before generating.`,
+          error: `Rate Limit: Maximum 2 generation requests per minute (2 RPM) reached. Cooldown active for ${rateCheck.windowSecondsRemaining}s.`,
           code: 'RPM_COOLDOWN',
-          retryAfter: rateCheck.retryAfterSeconds,
+          retryAfter: rateCheck.windowSecondsRemaining,
           rpmStatus: rateCheck,
         },
         { status: 429 }

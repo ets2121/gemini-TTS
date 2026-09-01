@@ -103,9 +103,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: `Rate Limit: Max 2 RPM reached. Voice preview generation is on cooldown for ${rateCheck.retryAfterSeconds}s.`,
+          error: `Rate Limit: Max 2 RPM reached. Voice preview generation is on cooldown for ${rateCheck.windowSecondsRemaining}s.`,
           code: 'RPM_COOLDOWN',
-          retryAfter: rateCheck.retryAfterSeconds,
+          retryAfter: rateCheck.windowSecondsRemaining,
           rpmStatus: rateCheck,
         },
         { status: 429 }
