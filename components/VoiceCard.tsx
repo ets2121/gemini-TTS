@@ -177,7 +177,7 @@ const PREVIEW_AUDIO_CACHE = new Map<string, string>();
 /**
  * Clears all cached voice preview audio both in memory and localStorage.
  */
-export function clearAllVoicePreviewsCache() {
+export async function clearAllVoicePreviewsCache() {
   PREVIEW_AUDIO_CACHE.clear();
   try {
     for (let i = localStorage.length - 1; i >= 0; i--) {
@@ -186,6 +186,11 @@ export function clearAllVoicePreviewsCache() {
         localStorage.removeItem(key);
       }
     }
+    await fetch('/api/tts/preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ resetAll: true }),
+    });
   } catch {
     // Ignore storage cleanup issues
   }
@@ -272,44 +277,6 @@ export const VoiceCard: React.FC<VoiceCardProps> = ({
     }
   };
 
-  const playBrowserSpeechFallback = (sampleText: string) => {
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(sampleText);
-      const voices = window.speechSynthesis.getVoices();
-
-      // Pick the best natural voice matching gender
-      const matchedVoice = voices.find((v) => {
-        const vName = (v.name || '').toLowerCase();
-        if (voice.gender === 'Female') {
-          return vName.includes('female') || vName.includes('samantha') || vName.includes('zira') || vName.includes('karen') || vName.includes('victoria');
-        } else if (voice.gender === 'Male') {
-          return vName.includes('male') || vName.includes('david') || vName.includes('alex') || vName.includes('daniel') || vName.includes('george');
-        }
-        return true;
-      }) || voices[0];
-
-      if (matchedVoice) {
-        utterance.voice = matchedVoice;
-      }
-
-      utterance.rate = 1.0;
-      utterance.pitch = voice.gender === 'Female' ? 1.05 : voice.gender === 'Male' ? 0.92 : 1.0;
-
-      utterance.onend = () => {
-        onStopPlayPreview();
-      };
-      utterance.onerror = () => {
-        onStopPlayPreview();
-      };
-
-      onStartPlayPreview(voice.id);
-      window.speechSynthesis.speak(utterance);
-    } else {
-      onStopPlayPreview();
-    }
-  };
-
   const handleTogglePreview = async (e: React.MouseEvent, forceRefresh = false) => {
     e.stopPropagation();
 
@@ -318,9 +285,6 @@ export const VoiceCard: React.FC<VoiceCardProps> = ({
         audioRef.current.pause();
         audioRef.current.currentTime = 0;
       }
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
       onStopPlayPreview();
       return;
     }
@@ -328,16 +292,8 @@ export const VoiceCard: React.FC<VoiceCardProps> = ({
     try {
       let audioBase64 = !forceRefresh ? PREVIEW_AUDIO_CACHE.get(voice.id) || '' : '';
 
-      if (!audioBase64 && !forceRefresh) {
-        try {
-          audioBase64 = localStorage.getItem(`speechcraft_preview_${voice.id}`) || '';
-        } catch {
-          // fallback
-        }
-      }
-
       if (!audioBase64 || forceRefresh) {
-        // Fetch preview from server
+        // Fetch preview from server (persistent cache or fresh Gemini synthesis)
         setIsLoadingPreview(true);
         const res = await fetch('/api/tts/preview', {
           method: 'POST',
@@ -345,16 +301,15 @@ export const VoiceCard: React.FC<VoiceCardProps> = ({
           body: JSON.stringify({ voiceName: voice.id, forceRefresh }),
         });
         const data = await res.json();
-        if (!res.ok || !data.success) {
-          throw new Error(data.error || 'Failed to get preview');
-        }
-
         setIsLoadingPreview(false);
 
-        // If Gemini rate-limit quota was reached, speak with browser natural speech so user hears real words
-        if (data.isQuotaFallback) {
-          showRateLimitToast(30, true);
-          playBrowserSpeechFallback(data.sampleText);
+        if (!res.ok || !data.success) {
+          if (res.status === 429 || data.code === 'RATE_LIMIT') {
+            showRateLimitToast(60, false);
+          } else {
+            showErrorToast('Voice Preview Error', data.error || 'Could not synthesize voice preview.');
+          }
+          onStopPlayPreview();
           return;
         }
 
@@ -364,9 +319,7 @@ export const VoiceCard: React.FC<VoiceCardProps> = ({
 
         try {
           localStorage.setItem(`speechcraft_preview_${voice.id}`, audioBase64);
-        } catch (storageErr) {
-          console.warn('Storage quota full or disabled for preview cache:', storageErr);
-        }
+        } catch (_) {}
       }
 
       setIsLoadingPreview(false);

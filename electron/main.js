@@ -49,14 +49,22 @@ function writeConfig(config) {
 }
 
 // ─── Network helpers ─────────────────────────────────────────────────────────
-function findFreePort() {
-  return new Promise((resolve, reject) => {
-    const srv = net.createServer();
-    srv.listen(0, '127.0.0.1', () => {
-      const { port } = srv.address();
-      srv.close(() => resolve(port));
+function findFreePort(preferredPort = 34789) {
+  return new Promise((resolve) => {
+    // 1. Try preferred stable port first so localStorage/origin is preserved
+    const preferredServer = net.createServer();
+    preferredServer.once('error', () => {
+      // Preferred port in use, fall back to any free port
+      const fallbackServer = net.createServer();
+      fallbackServer.listen(0, '127.0.0.1', () => {
+        const { port } = fallbackServer.address();
+        fallbackServer.close(() => resolve(port));
+      });
+      fallbackServer.once('error', () => resolve(3000));
     });
-    srv.on('error', reject);
+    preferredServer.listen(preferredPort, '127.0.0.1', () => {
+      preferredServer.close(() => resolve(preferredPort));
+    });
   });
 }
 

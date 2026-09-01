@@ -32,7 +32,7 @@ import { ProgressIndicator } from '@/components/ProgressIndicator';
 import { AudioPlayerBar } from '@/components/AudioPlayerBar';
 import { HistoryDrawer } from '@/components/HistoryDrawer';
 import { TTSHistoryItem } from '@/lib/db';
-import { loadUserPreferences, saveUserPreferences } from '@/lib/preferences';
+import { loadUserPreferences, saveUserPreferences, fetchUserPreferences } from '@/lib/preferences';
 import { useToast } from '@/components/ToastManager';
 
 
@@ -111,29 +111,59 @@ export default function Home() {
   // UI state
   const [copiedText, setCopiedText] = useState<boolean>(false);
 
-  // Load Saved Preferences on Mount after hydration
+  // Load Saved Preferences on Mount from backend JSON file & localStorage
   useEffect(() => {
-    const timer = setTimeout(() => {
-      const prefs = loadUserPreferences();
-      if (prefs) {
-        if (prefs.voiceId) {
-          const found = VOICES.find((v) => v.id === prefs.voiceId);
+    let isMounted = true;
+
+    async function initPreferences() {
+      // 1. Instant local cache
+      const localPrefs = loadUserPreferences();
+      if (localPrefs && isMounted) {
+        if (localPrefs.voiceId) {
+          const found = VOICES.find((v) => v.id === localPrefs.voiceId);
           if (found) setSelectedVoice(found);
         }
-        if (prefs.voiceStyle !== undefined) setVoiceStyle(prefs.voiceStyle);
-        if (prefs.selectedModel) setSelectedModel(prefs.selectedModel);
-        if (typeof prefs.pitch === 'number') setPitch(prefs.pitch);
-        if (typeof prefs.speed === 'number') setSpeed(prefs.speed);
-        if (typeof prefs.autoPlay === 'boolean') setAutoPlay(prefs.autoPlay);
-        if (prefs.downloadFormat) setDownloadFormat(prefs.downloadFormat);
-        if (prefs.lastTextDraft && prefs.lastTextDraft.trim()) {
-          setText(prefs.lastTextDraft);
+        if (localPrefs.voiceStyle !== undefined) setVoiceStyle(localPrefs.voiceStyle);
+        if (localPrefs.selectedModel) setSelectedModel(localPrefs.selectedModel);
+        if (typeof localPrefs.pitch === 'number') setPitch(localPrefs.pitch);
+        if (typeof localPrefs.speed === 'number') setSpeed(localPrefs.speed);
+        if (typeof localPrefs.autoPlay === 'boolean') setAutoPlay(localPrefs.autoPlay);
+        if (localPrefs.downloadFormat) setDownloadFormat(localPrefs.downloadFormat);
+        if (localPrefs.lastTextDraft && localPrefs.lastTextDraft.trim()) {
+          setText(localPrefs.lastTextDraft);
         }
       }
-      setIsInitialized(true);
-    }, 0);
 
-    return () => clearTimeout(timer);
+      // 2. Authoritative persistent fetch from server JSON database
+      try {
+        const serverPrefs = await fetchUserPreferences();
+        if (serverPrefs && isMounted) {
+          if (serverPrefs.voiceId) {
+            const found = VOICES.find((v) => v.id === serverPrefs.voiceId);
+            if (found) setSelectedVoice(found);
+          }
+          if (serverPrefs.voiceStyle !== undefined) setVoiceStyle(serverPrefs.voiceStyle);
+          if (serverPrefs.selectedModel) setSelectedModel(serverPrefs.selectedModel);
+          if (typeof serverPrefs.pitch === 'number') setPitch(serverPrefs.pitch);
+          if (typeof serverPrefs.speed === 'number') setSpeed(serverPrefs.speed);
+          if (typeof serverPrefs.autoPlay === 'boolean') setAutoPlay(serverPrefs.autoPlay);
+          if (serverPrefs.downloadFormat) setDownloadFormat(serverPrefs.downloadFormat);
+          if (serverPrefs.lastTextDraft && serverPrefs.lastTextDraft.trim()) {
+            setText(serverPrefs.lastTextDraft);
+          }
+        }
+      } catch (err) {
+        console.warn('Error fetching server preferences:', err);
+      } finally {
+        if (isMounted) setIsInitialized(true);
+      }
+    }
+
+    initPreferences();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   // Auto-Save Preferences whenever config changes
@@ -253,17 +283,22 @@ export default function Home() {
       const data = await response.json();
 
       if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Failed to synthesize audio');
+        const errorText = data.error || 'Failed to synthesize audio with Gemini TTS.';
+        if (response.status === 429 || data.code === 'RATE_LIMIT') {
+          showRateLimitToast(60, false);
+        } else if (response.status === 401 || data.code === 'API_KEY_MISSING' || data.code === 'INVALID_API_KEY') {
+          showErrorToast('Gemini API Key Required', errorText);
+        } else {
+          showErrorToast('Speech Synthesis Error', errorText);
+        }
+        setErrorMsg(errorText);
+        return;
       }
 
-      if (data.isQuotaFallback) {
-        showRateLimitToast(60, true);
-      } else {
-        showSuccessToast(
-          'Speech Synthesis Ready',
-          `Generated ${data.item.audio_duration}s audio track with ${selectedVoice.name}.`
-        );
-      }
+      showSuccessToast(
+        'Speech Synthesis Complete',
+        `Generated ${data.item.audio_duration}s neural audio with ${selectedVoice.name}.`
+      );
 
       setCurrentAudioItem(data.item);
       setActivePlayingId(data.item.id);

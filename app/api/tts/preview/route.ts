@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI, Modality } from '@google/genai';
-import { pcmToWav, generateSyntheticVoiceWave } from '@/lib/audio';
+import { pcmToWav } from '@/lib/audio';
+import {
+  getStoredVoicePreviews,
+  getStoredVoicePreview,
+  saveStoredVoicePreview,
+  clearStoredVoicePreviews,
+} from '@/lib/db';
 
-// Pre-defined sample script for crisp voice previews
+// Sample preview script for each voice persona
 const VOICE_PREVIEWS: Record<string, string> = {
   Kore: "Hello! I'm Kore. My voice is warm, articulate, and confident for presentations and podcasts.",
   Zephyr: "Welcome. I am Zephyr. My tone is velvety and gentle, ideal for meditation and calm narration.",
@@ -24,7 +30,7 @@ const BASE_VOICE_MAP: Record<string, string> = {
   Kore: 'Kore',
   Zephyr: 'Zephyr',
   Aoede: 'Aoede',
-  Leda: 'Kore',
+  Leda: 'Leda',
   Mimosa: 'Aoede',
   Thalia: 'Aoede',
   Charon: 'Charon',
@@ -37,8 +43,23 @@ const BASE_VOICE_MAP: Record<string, string> = {
   Callisto: 'Zephyr',
 };
 
-// Server-side in-memory preview cache to avoid burning Gemini rate limits on repetitive previews
-const SERVER_PREVIEW_CACHE = new Map<string, { audioBase64: string; durationSeconds: number }>();
+// GET: Returns list of all cached voice preview names
+export async function GET() {
+  try {
+    const previews = await getStoredVoicePreviews();
+    const cachedVoiceNames = Object.keys(previews);
+    return NextResponse.json({
+      success: true,
+      cachedVoiceNames,
+      count: cachedVoiceNames.length,
+    });
+  } catch (error: any) {
+    return NextResponse.json(
+      { success: false, error: 'Failed to retrieve cached previews.' },
+      { status: 500 }
+    );
+  }
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -46,10 +67,10 @@ export async function POST(req: NextRequest) {
     const { voiceName = 'Kore', forceRefresh = false, resetAll = false } = body;
 
     if (resetAll) {
-      SERVER_PREVIEW_CACHE.clear();
+      await clearStoredVoicePreviews();
       return NextResponse.json({
         success: true,
-        message: 'All server preview audio caches cleared.',
+        message: 'All persistent voice preview audio caches cleared.',
       });
     }
 
@@ -57,89 +78,131 @@ export async function POST(req: NextRequest) {
       VOICE_PREVIEWS[voiceName] ||
       `Hello! I am ${voiceName}, ready to bring your speech synthesis projects to life.`;
 
-    const cacheKey = `preview_${voiceName}`;
-    if (!forceRefresh && SERVER_PREVIEW_CACHE.has(cacheKey)) {
-      const cached = SERVER_PREVIEW_CACHE.get(cacheKey)!;
-      return NextResponse.json({
-        success: true,
-        voiceName,
-        audioBase64: cached.audioBase64,
-        mimeType: 'audio/wav',
-        durationSeconds: cached.durationSeconds,
-        sampleText: previewText,
-        cached: true,
-        isQuotaFallback: false,
-      });
+    // Check persistent file cache first
+    if (!forceRefresh) {
+      const cached = await getStoredVoicePreview(voiceName);
+      if (cached && cached.audioBase64) {
+        return NextResponse.json({
+          success: true,
+          voiceName,
+          audioBase64: cached.audioBase64,
+          mimeType: 'audio/wav',
+          durationSeconds: cached.durationSeconds,
+          sampleText: previewText,
+          cached: true,
+        });
+      }
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (!apiKey || !apiKey.trim()) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Google Gemini API Key is missing. Please click Settings to configure your API key.',
+          code: 'API_KEY_MISSING',
+        },
+        { status: 401 }
+      );
     }
 
     const mappedVoice = BASE_VOICE_MAP[voiceName] || 'Kore';
     const targetModel = 'gemini-3.1-flash-tts-preview';
 
-    let wavBuffer: Buffer;
-    let durationSeconds = 0;
-    let isQuotaFallback = false;
+    const ai = new GoogleGenAI({
+      apiKey: apiKey.trim(),
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    let base64RawPcm: string | undefined;
 
-    if (apiKey) {
-      try {
-        const ai = new GoogleGenAI({
-          apiKey: apiKey,
-          httpOptions: {
-            headers: {
-              'User-Agent': 'aistudio-build',
+    try {
+      const response = await ai.models.generateContent({
+        model: targetModel,
+        contents: [{ parts: [{ text: previewText }] }],
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: mappedVoice },
             },
           },
-        });
+        },
+      });
 
-        const response = await ai.models.generateContent({
-          model: targetModel,
-          contents: [{ parts: [{ text: previewText }] }],
-          config: {
-            responseModalities: [Modality.AUDIO],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: { voiceName: mappedVoice },
-              },
-            },
+      base64RawPcm = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    } catch (geminiErr: any) {
+      console.error(`Gemini voice preview failed for ${voiceName}:`, geminiErr);
+      const errMsg = geminiErr?.message || '';
+
+      if (
+        errMsg.includes('429') ||
+        errMsg.includes('RESOURCE_EXHAUSTED') ||
+        errMsg.toLowerCase().includes('quota')
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Gemini Rate Limit Exceeded. Please wait a moment before previewing voices.',
+            code: 'RATE_LIMIT',
           },
-        });
-
-        const base64RawPcm = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-
-        if (base64RawPcm) {
-          const pcmBuffer = Buffer.from(base64RawPcm, 'base64');
-          wavBuffer = pcmToWav(pcmBuffer, 24000);
-          durationSeconds = Number((pcmBuffer.length / 48000).toFixed(2));
-        } else {
-          isQuotaFallback = true;
-          wavBuffer = generateSyntheticVoiceWave(previewText, voiceName, 1.0, 1.0);
-          durationSeconds = Number(((wavBuffer.length - 44) / 48000).toFixed(2));
-        }
-      } catch (geminiErr: any) {
-        isQuotaFallback = true;
-        const errMsg = geminiErr?.message || '';
-        if (errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED')) {
-          console.info(`Voice preview for ${voiceName}: rate limited.`);
-        } else {
-          console.warn(`Voice preview note for ${voiceName}:`, errMsg.slice(0, 100));
-        }
-        wavBuffer = generateSyntheticVoiceWave(previewText, voiceName, 1.0, 1.0);
-        durationSeconds = Number(((wavBuffer.length - 44) / 48000).toFixed(2));
+          { status: 429 }
+        );
       }
-    } else {
-      isQuotaFallback = true;
-      wavBuffer = generateSyntheticVoiceWave(previewText, voiceName, 1.0, 1.0);
-      durationSeconds = Number(((wavBuffer.length - 44) / 48000).toFixed(2));
+
+      if (
+        errMsg.includes('403') ||
+        errMsg.includes('API_KEY_INVALID') ||
+        errMsg.toLowerCase().includes('api key not valid')
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Invalid Google Gemini API Key. Please verify your API Key in Settings.',
+            code: 'INVALID_API_KEY',
+          },
+          { status: 401 }
+        );
+      }
+
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Preview synthesis error: ${errMsg || 'Failed to generate voice preview.'}`,
+          code: 'API_ERROR',
+        },
+        { status: 500 }
+      );
     }
 
+    if (!base64RawPcm) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'No audio returned by Gemini TTS for voice preview.',
+          code: 'NO_AUDIO_RETURNED',
+        },
+        { status: 502 }
+      );
+    }
+
+    const pcmBuffer = Buffer.from(base64RawPcm, 'base64');
+    const wavBuffer = pcmToWav(pcmBuffer, 24000);
+    const durationSeconds = Number((pcmBuffer.length / 48000).toFixed(2));
     const audioBase64 = wavBuffer.toString('base64');
     const finalDuration = Math.max(0.5, durationSeconds);
 
-    // Only cache if generated by real Gemini Neural API
-    if (!isQuotaFallback) {
-      SERVER_PREVIEW_CACHE.set(cacheKey, { audioBase64, durationSeconds: finalDuration });
-    }
+    // Save to persistent file storage in data/voice_previews.json
+    await saveStoredVoicePreview(voiceName, {
+      audioBase64,
+      durationSeconds: finalDuration,
+      sampleText: previewText,
+    });
 
     return NextResponse.json({
       success: true,
@@ -148,14 +211,13 @@ export async function POST(req: NextRequest) {
       mimeType: 'audio/wav',
       durationSeconds: finalDuration,
       sampleText: previewText,
-      isQuotaFallback,
+      cached: false,
     });
   } catch (error: any) {
-    console.error('Preview error:', error);
+    console.error('Voice preview fatal error:', error);
     return NextResponse.json(
-      { error: error?.message || 'Failed to generate voice preview' },
+      { success: false, error: error?.message || 'Failed to process voice preview.', code: 'SERVER_ERROR' },
       { status: 500 }
     );
   }
 }
-

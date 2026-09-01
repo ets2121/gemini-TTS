@@ -8,6 +8,8 @@ const DB_DIR = process.env.ELECTRON_USER_DATA
   : path.join(process.cwd(), 'data');
 const DATA_FILE = path.join(DB_DIR, 'tts_history.json');
 const PRESETS_FILE = path.join(DB_DIR, 'voice_presets.json');
+const PREFERENCES_FILE = path.join(DB_DIR, 'user_preferences.json');
+const VOICE_PREVIEWS_FILE = path.join(DB_DIR, 'voice_previews.json');
 
 export interface TTSHistoryItem {
   id: string;
@@ -34,6 +36,29 @@ export interface VoiceStylePreset {
   category: string;
   created_at: string;
 }
+
+export interface UserPreferencesData {
+  voiceId: string;
+  voiceStyle: string;
+  selectedModel: string;
+  pitch: number;
+  speed: number;
+  autoPlay: boolean;
+  downloadFormat: 'mp3' | 'wav';
+  lastTextDraft: string;
+  updatedAt?: string;
+}
+
+export const DEFAULT_USER_PREFERENCES: UserPreferencesData = {
+  voiceId: 'Kore',
+  voiceStyle: 'warm, articulate, confident',
+  selectedModel: 'gemini-3.1-flash-tts-preview',
+  pitch: 1.0,
+  speed: 1.0,
+  autoPlay: true,
+  downloadFormat: 'mp3',
+  lastTextDraft: 'Welcome to AI TTS Generator. Type any sentence, customize the vocal style, and generate studio-grade audio saved directly to your local library.',
+};
 
 const DEFAULT_PRESETS: VoiceStylePreset[] = [
   {
@@ -139,64 +164,61 @@ function writeHistoryData(items: TTSHistoryItem[]): void {
   }
 }
 
-export async function insertHistoryItem(item: TTSHistoryItem): Promise<void> {
+export async function insertHistoryItem(item: TTSHistoryItem): Promise<TTSHistoryItem> {
   const items = readHistoryData();
-  // Filter out any existing with same id
-  const filtered = items.filter((existing) => existing.id !== item.id);
-  const normalizedItem: TTSHistoryItem = {
-    ...item,
-    voice_gender: item.voice_gender || 'Neutral',
-    voice_style: item.voice_style || '',
-    model_name: item.model_name || 'gemini-3.1-flash-tts-preview',
-    pitch: typeof item.pitch === 'number' ? item.pitch : 1.0,
-    speed: typeof item.speed === 'number' ? item.speed : 1.0,
-    audio_mime_type: item.audio_mime_type || 'audio/wav',
-    audio_duration: Number(item.audio_duration) || 0,
-    file_size_bytes: Number(item.file_size_bytes) || 0,
-    is_favorite: item.is_favorite ? 1 : 0,
-    created_at: item.created_at || new Date().toISOString(),
-  };
-
-  // Add newest item to the top
-  filtered.unshift(normalizedItem);
-  writeHistoryData(filtered);
+  items.unshift(item); // prepend latest
+  writeHistoryData(items);
+  return item;
 }
 
-export async function getAllHistory(options?: {
+export async function getHistory(options: {
   search?: string;
   favoriteOnly?: boolean;
   voiceName?: string;
   limit?: number;
-}): Promise<TTSHistoryItem[]> {
+  offset?: number;
+} = {}): Promise<{ items: TTSHistoryItem[]; total: number }> {
   let items = readHistoryData();
 
-  if (options?.favoriteOnly) {
-    items = items.filter((i) => i.is_favorite === 1);
+  if (options.favoriteOnly) {
+    items = items.filter((item) => item.is_favorite === 1);
   }
 
-  if (options?.voiceName && options.voiceName !== 'all') {
-    const targetVoice = options.voiceName.toLowerCase();
-    items = items.filter((i) => (i.voice_name || '').toLowerCase() === targetVoice);
-  }
-
-  if (options?.search && options.search.trim()) {
-    const query = options.search.trim().toLowerCase();
+  if (options.voiceName && options.voiceName !== 'all') {
     items = items.filter(
-      (i) =>
-        (i.text || '').toLowerCase().includes(query) ||
-        (i.voice_style || '').toLowerCase().includes(query) ||
-        (i.voice_name || '').toLowerCase().includes(query)
+      (item) => item.voice_name.toLowerCase() === options.voiceName!.toLowerCase()
     );
   }
 
-  // Sort descending by created_at
-  items.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-  if (options?.limit && options.limit > 0) {
-    items = items.slice(0, options.limit);
+  if (options.search && options.search.trim()) {
+    const q = options.search.toLowerCase().trim();
+    items = items.filter(
+      (item) =>
+        item.text.toLowerCase().includes(q) ||
+        item.voice_name.toLowerCase().includes(q) ||
+        item.voice_style.toLowerCase().includes(q)
+    );
   }
 
-  return items;
+  const total = items.length;
+  const offset = options.offset || 0;
+  const limit = options.limit || 50;
+
+  return {
+    items: items.slice(offset, offset + limit),
+    total,
+  };
+}
+
+export async function getAllHistory(options: {
+  search?: string;
+  favoriteOnly?: boolean;
+  voiceName?: string;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<TTSHistoryItem[]> {
+  const res = await getHistory(options);
+  return res.items;
 }
 
 export async function getHistoryById(id: string): Promise<TTSHistoryItem | null> {
@@ -269,5 +291,107 @@ export async function getPresets(): Promise<VoiceStylePreset[]> {
   } catch (err) {
     console.error('Error fetching presets:', err);
     return DEFAULT_PRESETS;
+  }
+}
+
+// ─── User Preferences File Persistence ─────────────────────────────────────────
+
+export async function getStoredPreferences(): Promise<UserPreferencesData> {
+  ensureDataDir();
+  try {
+    if (fs.existsSync(PREFERENCES_FILE)) {
+      const content = fs.readFileSync(PREFERENCES_FILE, 'utf-8');
+      const parsed = JSON.parse(content);
+      return {
+        ...DEFAULT_USER_PREFERENCES,
+        ...parsed,
+      };
+    }
+  } catch (err) {
+    console.warn('Error reading preferences file:', err);
+  }
+  return DEFAULT_USER_PREFERENCES;
+}
+
+export async function saveStoredPreferences(
+  prefs: Partial<UserPreferencesData>
+): Promise<UserPreferencesData> {
+  ensureDataDir();
+  try {
+    const current = await getStoredPreferences();
+    const updated: UserPreferencesData = {
+      ...current,
+      ...prefs,
+      updatedAt: new Date().toISOString(),
+    };
+    const tempFile = `${PREFERENCES_FILE}.tmp`;
+    fs.writeFileSync(tempFile, JSON.stringify(updated, null, 2), 'utf-8');
+    fs.renameSync(tempFile, PREFERENCES_FILE);
+    return updated;
+  } catch (err) {
+    console.error('Error saving user preferences to file:', err);
+    return { ...DEFAULT_USER_PREFERENCES, ...prefs };
+  }
+}
+
+// ─── Voice Previews Audio File Persistence ──────────────────────────────────────
+
+export interface VoicePreviewRecord {
+  audioBase64: string;
+  durationSeconds: number;
+  sampleText: string;
+  updatedAt: string;
+}
+
+export async function getStoredVoicePreviews(): Promise<Record<string, VoicePreviewRecord>> {
+  ensureDataDir();
+  try {
+    if (fs.existsSync(VOICE_PREVIEWS_FILE)) {
+      const content = fs.readFileSync(VOICE_PREVIEWS_FILE, 'utf-8');
+      const parsed = JSON.parse(content);
+      if (parsed && typeof parsed === 'object') {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn('Error reading voice previews file:', err);
+  }
+  return {};
+}
+
+export async function getStoredVoicePreview(
+  voiceName: string
+): Promise<VoicePreviewRecord | null> {
+  const previews = await getStoredVoicePreviews();
+  return previews[voiceName] || null;
+}
+
+export async function saveStoredVoicePreview(
+  voiceName: string,
+  preview: { audioBase64: string; durationSeconds: number; sampleText: string }
+): Promise<void> {
+  ensureDataDir();
+  try {
+    const previews = await getStoredVoicePreviews();
+    previews[voiceName] = {
+      ...preview,
+      updatedAt: new Date().toISOString(),
+    };
+    const tempFile = `${VOICE_PREVIEWS_FILE}.tmp`;
+    fs.writeFileSync(tempFile, JSON.stringify(previews, null, 2), 'utf-8');
+    fs.renameSync(tempFile, VOICE_PREVIEWS_FILE);
+  } catch (err) {
+    console.error(`Error saving voice preview for ${voiceName}:`, err);
+  }
+}
+
+export async function clearStoredVoicePreviews(): Promise<void> {
+  ensureDataDir();
+  try {
+    if (fs.existsSync(VOICE_PREVIEWS_FILE)) {
+      fs.unlinkSync(VOICE_PREVIEWS_FILE);
+    }
+  } catch (err) {
+    console.error('Error clearing voice previews file:', err);
   }
 }
