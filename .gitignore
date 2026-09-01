@@ -5,3 +5,7 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Local data & lock files
+data/
+package-lock.json
