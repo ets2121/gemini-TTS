@@ -97,16 +97,16 @@ export async function POST(req: NextRequest) {
 
     const targetModel = model || 'gemini-2.5-flash-preview-tts';
 
-    // ── Enforce 2 RPM Limit on Live Preview Generation ────────────────────────
-    const rateCheck = checkModelRateLimit(targetModel, true);
-    if (!rateCheck.allowed) {
+    // ── Pre-check 2 RPM Limit on Live Preview Generation ────────────────────────
+    const initialRateCheck = checkModelRateLimit(targetModel, false);
+    if (!initialRateCheck.allowed) {
       return NextResponse.json(
         {
           success: false,
-          error: `Rate Limit: Max 2 RPM reached. Voice preview generation is on cooldown for ${rateCheck.windowSecondsRemaining}s.`,
+          error: `Rate Limit: Max 2 RPM reached. Voice preview generation is on cooldown for ${initialRateCheck.windowSecondsRemaining}s.`,
           code: 'RPM_COOLDOWN',
-          retryAfter: rateCheck.windowSecondsRemaining,
-          rpmStatus: rateCheck,
+          retryAfter: initialRateCheck.windowSecondsRemaining,
+          rpmStatus: initialRateCheck,
         },
         { status: 429 }
       );
@@ -139,9 +139,10 @@ export async function POST(req: NextRequest) {
     let base64RawPcm: string | undefined;
 
     try {
+      const promptContent = `Please read the following text aloud:\n${previewText}`;
       const response = await ai.models.generateContent({
         model: targetModel,
-        contents: [{ parts: [{ text: previewText }] }],
+        contents: [{ parts: [{ text: promptContent }] }],
         config: {
           responseModalities: [Modality.AUDIO],
           speechConfig: {
@@ -167,7 +168,6 @@ export async function POST(req: NextRequest) {
             success: false,
             error: 'Gemini Rate Limit Exceeded. Please wait a moment before previewing voices.',
             code: 'RATE_LIMIT',
-            rpmStatus: rateCheck,
           },
           { status: 429 }
         );
@@ -222,6 +222,9 @@ export async function POST(req: NextRequest) {
       sampleText: previewText,
     });
 
+    // Consume 1 RPM slot now that live preview generation succeeded
+    const finalRpmStatus = checkModelRateLimit(targetModel, true);
+
     return NextResponse.json({
       success: true,
       voiceName,
@@ -230,7 +233,7 @@ export async function POST(req: NextRequest) {
       durationSeconds: finalDuration,
       sampleText: previewText,
       cached: false,
-      rpmStatus: rateCheck,
+      rpmStatus: finalRpmStatus,
     });
   } catch (error: any) {
     console.error('Voice preview fatal error:', error);

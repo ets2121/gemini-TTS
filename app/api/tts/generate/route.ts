@@ -58,16 +58,16 @@ export async function POST(req: NextRequest) {
 
     const targetModel = model || 'gemini-2.5-flash-preview-tts';
 
-    // ── Enforce 2 RPM Limit Per Model ──────────────────────────────────────────
-    const rateCheck = checkModelRateLimit(targetModel, true);
-    if (!rateCheck.allowed) {
+    // ── Pre-check 2 RPM Limit (Do not consume until synthesis succeeds) ────────
+    const initialRateCheck = checkModelRateLimit(targetModel, false);
+    if (!initialRateCheck.allowed) {
       return NextResponse.json(
         {
           success: false,
-          error: `Rate Limit: Maximum 2 generation requests per minute (2 RPM) reached. Cooldown active for ${rateCheck.windowSecondsRemaining}s.`,
+          error: `Rate Limit: Maximum 2 generation requests per minute (2 RPM) reached. Cooldown active for ${initialRateCheck.windowSecondsRemaining}s.`,
           code: 'RPM_COOLDOWN',
-          retryAfter: rateCheck.windowSecondsRemaining,
-          rpmStatus: rateCheck,
+          retryAfter: initialRateCheck.windowSecondsRemaining,
+          rpmStatus: initialRateCheck,
         },
         { status: 429 }
       );
@@ -82,10 +82,10 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // Format style instruction
-    let promptContent = trimmedText;
+    // Format style instruction for Gemini TTS engine
+    let promptContent = `Please read the following text aloud:\n${trimmedText}`;
     if (voiceStyle && voiceStyle.trim()) {
-      promptContent = `Say in a ${voiceStyle.trim()} manner: ${trimmedText}`;
+      promptContent = `Please read the following text aloud in a ${voiceStyle.trim()} tone:\n${trimmedText}`;
     }
 
     const mappedVoice = BASE_VOICE_MAP[voiceName] || 'Kore';
@@ -121,7 +121,6 @@ export async function POST(req: NextRequest) {
             success: false,
             error: 'Gemini Rate Limit / Quota Exceeded. You have reached the request limit for your API key. Please wait a moment before trying again.',
             code: 'RATE_LIMIT',
-            rpmStatus: rateCheck,
           },
           { status: 429 }
         );
@@ -193,10 +192,13 @@ export async function POST(req: NextRequest) {
       console.error('Failed to store generation in history database:', dbErr);
     }
 
+    // Consume 1 RPM slot now that generation succeeded
+    const finalRpmStatus = checkModelRateLimit(targetModel, true);
+
     return NextResponse.json({
       success: true,
       item: historyRecord,
-      rpmStatus: rateCheck,
+      rpmStatus: finalRpmStatus,
     });
   } catch (error: any) {
     console.error('TTS Generation fatal error:', error);
