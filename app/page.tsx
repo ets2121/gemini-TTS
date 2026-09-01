@@ -26,13 +26,15 @@ import {
   PanelRightOpen,
   History as HistoryIcon,
 } from 'lucide-react';
-import { VOICES, VoiceOption, VoiceCard } from '@/components/VoiceCard';
+import { VOICES, VoiceOption, VoiceCard, clearAllVoicePreviewsCache } from '@/components/VoiceCard';
 import { StylePresetPicker } from '@/components/StylePresetPicker';
 import { ProgressIndicator } from '@/components/ProgressIndicator';
 import { AudioPlayerBar } from '@/components/AudioPlayerBar';
 import { HistoryDrawer } from '@/components/HistoryDrawer';
 import { TTSHistoryItem } from '@/lib/db';
 import { loadUserPreferences, saveUserPreferences } from '@/lib/preferences';
+import { useToast } from '@/components/ToastManager';
+
 
 interface ModelOption {
   id: string;
@@ -60,10 +62,13 @@ const TTS_MODELS: ModelOption[] = [
 ];
 
 export default function Home() {
+  const { showRateLimitToast, showErrorToast, showSuccessToast } = useToast();
+
   // Main Studio State
   const [text, setText] = useState<string>(
     'Welcome to SpeechCraft Studio. Type any sentence, customize the vocal style, and generate studio-grade audio saved directly to your SQLite database.'
   );
+
   const [selectedVoice, setSelectedVoice] = useState<VoiceOption>(VOICES[0]); // Kore (Female)
   const [voiceStyle, setVoiceStyle] = useState<string>('warm, articulate, confident');
   const [selectedModel, setSelectedModel] = useState<string>('gemini-3.1-flash-tts-preview');
@@ -251,15 +256,31 @@ export default function Home() {
         throw new Error(data.error || 'Failed to synthesize audio');
       }
 
+      if (data.isQuotaFallback) {
+        showRateLimitToast(60, true);
+      } else {
+        showSuccessToast(
+          'Speech Synthesis Ready',
+          `Generated ${data.item.audio_duration}s audio track with ${selectedVoice.name}.`
+        );
+      }
+
       setCurrentAudioItem(data.item);
       setActivePlayingId(data.item.id);
       refreshHistory();
     } catch (err: any) {
       console.error('Generation failure:', err);
-      setErrorMsg(err.message || 'Error occurred during speech synthesis.');
+      const errMsgText = err?.message || 'Error occurred during speech synthesis.';
+      setErrorMsg(errMsgText);
+      if (errMsgText.includes('429') || errMsgText.includes('quota') || errMsgText.includes('RESOURCE_EXHAUSTED')) {
+        showRateLimitToast(60, false);
+      } else {
+        showErrorToast('Speech Synthesis Error', errMsgText);
+      }
     } finally {
       setIsGenerating(false);
     }
+
   };
 
   // Toggle Favorite in SQLite
@@ -322,6 +343,34 @@ export default function Home() {
       console.error('Clear history error:', err);
     }
   };
+
+  // Reset All Voice Previews
+  const [resettingPreviews, setResettingPreviews] = useState<boolean>(false);
+  const [resetSuccessMessage, setResetSuccessMessage] = useState<string | null>(null);
+
+  const handleResetAllPreviews = async () => {
+    try {
+      setResettingPreviews(true);
+      clearAllVoicePreviewsCache();
+      await fetch('/api/tts/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resetAll: true }),
+      });
+      showSuccessToast(
+        'Voice Caches Reset',
+        'All voice preview audio caches have been cleared. Ready to generate fresh previews!'
+      );
+      setResetSuccessMessage('All voice preview caches reset! Click any voice to generate fresh audio.');
+      setTimeout(() => setResetSuccessMessage(null), 4000);
+    } catch (err: any) {
+      console.error('Reset previews failed:', err);
+      showErrorToast('Reset Failed', err?.message || 'Could not reset voice preview caches.');
+    } finally {
+      setResettingPreviews(false);
+    }
+  };
+
 
   // Play a history item in active player
   const handlePlayHistoryItem = (item: TTSHistoryItem) => {
@@ -612,32 +661,54 @@ export default function Home() {
                     Select Voice Persona
                   </h3>
                   <p className="text-[11px] text-gray-400">
-                    {VOICES.length} neural voices with instant preview audio
+                    {VOICES.length} neural voices with instant preview audio & reset controls
                   </p>
                 </div>
 
-                {/* Active Voice Persona & Gender Badge */}
-                <div className="flex items-center gap-1.5 bg-[#18181E] px-2.5 py-1 rounded-lg border border-[#26262E]">
-                  <span className="text-[11px] text-gray-300 font-medium">
-                    Active: <strong className="text-teal-300">{selectedVoice.name}</strong>
-                  </span>
-                  <span
-                    className={`text-[9px] font-semibold uppercase px-1.5 py-0.2 rounded border ${
-                      selectedVoice.gender === 'Female'
-                        ? 'border-teal-500/40 text-teal-300 bg-teal-500/10'
-                        : selectedVoice.gender === 'Male'
-                        ? 'border-sky-500/40 text-sky-300 bg-sky-500/10'
-                        : 'border-purple-500/40 text-purple-300 bg-purple-500/10'
-                    }`}
+                {/* Right controls: Active Voice & Reset Previews Button */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    id="reset-all-previews-btn"
+                    onClick={handleResetAllPreviews}
+                    disabled={resettingPreviews}
+                    title="Clear cached samples and force re-generate all previews"
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-gray-400 hover:text-teal-300 bg-[#181820] hover:bg-[#20202A] border border-[#2A2A34] transition"
                   >
-                    {selectedVoice.gender === 'Female'
-                      ? '♀ Female'
-                      : selectedVoice.gender === 'Male'
-                      ? '♂ Male'
-                      : '⚥ Neutral'}
-                  </span>
+                    <RotateCcw className={`w-3 h-3 ${resettingPreviews ? 'animate-spin text-teal-400' : ''}`} />
+                    <span>{resettingPreviews ? 'Resetting...' : 'Reset All Previews'}</span>
+                  </button>
+
+                  <div className="flex items-center gap-1.5 bg-[#18181E] px-2.5 py-1 rounded-lg border border-[#26262E]">
+                    <span className="text-[11px] text-gray-300 font-medium">
+                      Active: <strong className="text-teal-300">{selectedVoice.name}</strong>
+                    </span>
+                    <span
+                      className={`text-[9px] font-semibold uppercase px-1.5 py-0.2 rounded border ${
+                        selectedVoice.gender === 'Female'
+                          ? 'border-teal-500/40 text-teal-300 bg-teal-500/10'
+                          : selectedVoice.gender === 'Male'
+                          ? 'border-sky-500/40 text-sky-300 bg-sky-500/10'
+                          : 'border-purple-500/40 text-purple-300 bg-purple-500/10'
+                      }`}
+                    >
+                      {selectedVoice.gender === 'Female'
+                        ? '♀ Female'
+                        : selectedVoice.gender === 'Male'
+                        ? '♂ Male'
+                        : '⚥ Neutral'}
+                    </span>
+                  </div>
                 </div>
               </div>
+
+              {/* Reset Success Message Banner */}
+              {resetSuccessMessage && (
+                <div className="flex items-center gap-2 p-2 rounded-lg bg-teal-950/40 border border-teal-800/60 text-xs text-teal-300 animate-in fade-in duration-200">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+                  <span className="text-[11px]">{resetSuccessMessage}</span>
+                </div>
+              )}
 
               {/* Filter toolbar: Gender tabs + Search filter */}
               <div className="flex items-center justify-between flex-wrap gap-2">

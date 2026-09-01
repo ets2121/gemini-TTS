@@ -142,7 +142,11 @@ export async function POST(req: NextRequest) {
       success: true,
       item: historyRecord,
       isQuotaFallback,
+      quotaWarning: isQuotaFallback
+        ? 'Gemini 3.1 Flash Neural TTS reached its free-tier daily quota limit. Generated with acoustic synthesis fallback.'
+        : undefined,
     });
+
   } catch (error: any) {
     console.error('TTS Generation error:', error);
     return NextResponse.json(

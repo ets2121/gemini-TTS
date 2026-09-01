@@ -22,7 +22,10 @@ import {
   Loader2,
   Volume2,
   CheckCircle2,
+  RotateCcw,
 } from 'lucide-react';
+import { useToast } from '@/components/ToastManager';
+
 
 export interface VoiceOption {
   id: string;
@@ -171,6 +174,23 @@ export const VOICES: VoiceOption[] = [
 // Global in-memory cache for ultra-fast zero latency preview replays
 const PREVIEW_AUDIO_CACHE = new Map<string, string>();
 
+/**
+ * Clears all cached voice preview audio both in memory and localStorage.
+ */
+export function clearAllVoicePreviewsCache() {
+  PREVIEW_AUDIO_CACHE.clear();
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('speechcraft_preview_')) {
+        localStorage.removeItem(key);
+      }
+    }
+  } catch {
+    // Ignore storage cleanup issues
+  }
+}
+
 interface VoiceCardProps {
   voice: VoiceOption;
   isSelected: boolean;
@@ -188,9 +208,11 @@ export const VoiceCard: React.FC<VoiceCardProps> = ({
   onStartPlayPreview,
   onStopPlayPreview,
 }) => {
+  const { showRateLimitToast, showErrorToast } = useToast();
   const [isCached, setIsCached] = useState<boolean>(() => PREVIEW_AUDIO_CACHE.has(voice.id));
   const [isLoadingPreview, setIsLoadingPreview] = useState<boolean>(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
 
   const isPlayingThis = currentlyPlayingVoiceId === voice.id;
 
@@ -217,28 +239,96 @@ export const VoiceCard: React.FC<VoiceCardProps> = ({
 
   // Clean up audio on unmount or when another voice starts playing
   useEffect(() => {
-    if (!isPlayingThis && audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-    }
-  }, [isPlayingThis]);
-
-  const handleTogglePreview = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-
-    if (isPlayingThis) {
+    if (!isPlayingThis) {
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current.currentTime = 0;
+      }
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    }
+  }, [isPlayingThis]);
+
+  const playPreviewAudio = (audioBase64: string) => {
+    if (!audioRef.current) {
+      audioRef.current = new Audio();
+    }
+    audioRef.current.src = `data:audio/wav;base64,${audioBase64}`;
+    audioRef.current.onended = () => {
+      onStopPlayPreview();
+    };
+    audioRef.current.onerror = () => {
+      onStopPlayPreview();
+    };
+
+    onStartPlayPreview(voice.id);
+    const playPromise = audioRef.current.play();
+    if (playPromise !== undefined) {
+      playPromise.catch((err) => {
+        console.warn('Preview play prevented:', err);
+        onStopPlayPreview();
+      });
+    }
+  };
+
+  const playBrowserSpeechFallback = (sampleText: string) => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(sampleText);
+      const voices = window.speechSynthesis.getVoices();
+
+      // Pick the best natural voice matching gender
+      const matchedVoice = voices.find((v) => {
+        const vName = (v.name || '').toLowerCase();
+        if (voice.gender === 'Female') {
+          return vName.includes('female') || vName.includes('samantha') || vName.includes('zira') || vName.includes('karen') || vName.includes('victoria');
+        } else if (voice.gender === 'Male') {
+          return vName.includes('male') || vName.includes('david') || vName.includes('alex') || vName.includes('daniel') || vName.includes('george');
+        }
+        return true;
+      }) || voices[0];
+
+      if (matchedVoice) {
+        utterance.voice = matchedVoice;
+      }
+
+      utterance.rate = 1.0;
+      utterance.pitch = voice.gender === 'Female' ? 1.05 : voice.gender === 'Male' ? 0.92 : 1.0;
+
+      utterance.onend = () => {
+        onStopPlayPreview();
+      };
+      utterance.onerror = () => {
+        onStopPlayPreview();
+      };
+
+      onStartPlayPreview(voice.id);
+      window.speechSynthesis.speak(utterance);
+    } else {
+      onStopPlayPreview();
+    }
+  };
+
+  const handleTogglePreview = async (e: React.MouseEvent, forceRefresh = false) => {
+    e.stopPropagation();
+
+    if (isPlayingThis && !forceRefresh) {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      }
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
       }
       onStopPlayPreview();
       return;
     }
 
     try {
-      let audioBase64 = PREVIEW_AUDIO_CACHE.get(voice.id) || '';
+      let audioBase64 = !forceRefresh ? PREVIEW_AUDIO_CACHE.get(voice.id) || '' : '';
 
-      if (!audioBase64) {
+      if (!audioBase64 && !forceRefresh) {
         try {
           audioBase64 = localStorage.getItem(`speechcraft_preview_${voice.id}`) || '';
         } catch {
@@ -246,17 +336,26 @@ export const VoiceCard: React.FC<VoiceCardProps> = ({
         }
       }
 
-      if (!audioBase64) {
+      if (!audioBase64 || forceRefresh) {
         // Fetch preview from server
         setIsLoadingPreview(true);
         const res = await fetch('/api/tts/preview', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ voiceName: voice.id }),
+          body: JSON.stringify({ voiceName: voice.id, forceRefresh }),
         });
         const data = await res.json();
         if (!res.ok || !data.success) {
           throw new Error(data.error || 'Failed to get preview');
+        }
+
+        setIsLoadingPreview(false);
+
+        // If Gemini rate-limit quota was reached, speak with browser natural speech so user hears real words
+        if (data.isQuotaFallback) {
+          showRateLimitToast(30, true);
+          playBrowserSpeechFallback(data.sampleText);
+          return;
         }
 
         audioBase64 = data.audioBase64;
@@ -273,31 +372,27 @@ export const VoiceCard: React.FC<VoiceCardProps> = ({
       setIsLoadingPreview(false);
 
       if (audioBase64) {
-        if (!audioRef.current) {
-          audioRef.current = new Audio();
-        }
-        audioRef.current.src = `data:audio/wav;base64,${audioBase64}`;
-        audioRef.current.onended = () => {
-          onStopPlayPreview();
-        };
-        audioRef.current.onerror = () => {
-          onStopPlayPreview();
-        };
-
-        onStartPlayPreview(voice.id);
-        const playPromise = audioRef.current.play();
-        if (playPromise !== undefined) {
-          playPromise.catch((err) => {
-            console.warn('Preview play prevented:', err);
-            onStopPlayPreview();
-          });
-        }
+        playPreviewAudio(audioBase64);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Preview playback failure:', err);
+      showErrorToast('Voice Preview Error', err?.message || 'Could not load voice preview audio.');
       setIsLoadingPreview(false);
       onStopPlayPreview();
     }
+  };
+
+
+  const handleResetSinglePreview = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    PREVIEW_AUDIO_CACHE.delete(voice.id);
+    try {
+      localStorage.removeItem(`speechcraft_preview_${voice.id}`);
+    } catch {
+      // ignore
+    }
+    setIsCached(false);
+    handleTogglePreview(e, true);
   };
 
   const getVoiceIcon = () => {
@@ -410,54 +505,69 @@ export const VoiceCard: React.FC<VoiceCardProps> = ({
           ))}
         </div>
 
-        {/* Preview Voice Button with Live Pulse indicator */}
-        <button
-          type="button"
-          id={`voice-preview-btn-${voice.id.toLowerCase()}`}
-          onClick={handleTogglePreview}
-          disabled={isLoadingPreview}
-          title={
-            isPlayingThis
-              ? 'Click to stop preview'
-              : isCached
-              ? 'Play saved preview (Cached • Instant)'
-              : 'Generate & listen to voice sample'
-          }
-          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-medium transition-all ${
-            isPlayingThis
-              ? 'bg-teal-500 text-black font-bold shadow-md shadow-teal-500/40 ring-1 ring-teal-300 animate-pulse'
-              : isCached
-              ? 'bg-[#181820] hover:bg-[#22222E] text-teal-300 border border-teal-800/50 hover:border-teal-500/60'
-              : 'bg-[#1A1A22] hover:bg-[#22222C] text-gray-300 border border-[#2C2C38] hover:text-white'
-          }`}
-        >
-          {isLoadingPreview ? (
-            <>
-              <Loader2 className="w-3 h-3 animate-spin text-teal-400" />
-              <span>Loading...</span>
-            </>
-          ) : isPlayingThis ? (
-            <>
-              <Square className="w-2.5 h-2.5 fill-black text-black" />
-              <span>Playing...</span>
-              <span className="flex items-center gap-0.5 ml-0.5">
-                <span className="w-1 h-2 bg-black rounded-full animate-bounce"></span>
-                <span className="w-1 h-3 bg-black rounded-full animate-bounce [animation-delay:0.15s]"></span>
-                <span className="w-1 h-2 bg-black rounded-full animate-bounce [animation-delay:0.3s]"></span>
-              </span>
-            </>
-          ) : (
-            <>
-              <Play className="w-2.5 h-2.5 fill-current" />
-              <span>Preview</span>
-              {isCached && (
-                <span className="text-[7px] font-mono text-teal-400 ml-0.5 opacity-90" title="Ready in cache">
-                  ●
+        {/* Preview & Reset Voice Buttons */}
+        <div className="flex items-center gap-1">
+          {/* Reset Preview Button */}
+          <button
+            type="button"
+            id={`voice-reset-btn-${voice.id.toLowerCase()}`}
+            onClick={handleResetSinglePreview}
+            disabled={isLoadingPreview}
+            title="Reset cached preview & generate new audio sample"
+            className="p-1 rounded-md text-[10px] text-gray-400 hover:text-teal-300 hover:bg-[#20202A] border border-[#2A2A34] transition"
+          >
+            <RotateCcw className={`w-3 h-3 ${isLoadingPreview ? 'animate-spin' : ''}`} />
+          </button>
+
+          {/* Preview Voice Button with Live Pulse indicator */}
+          <button
+            type="button"
+            id={`voice-preview-btn-${voice.id.toLowerCase()}`}
+            onClick={(e) => handleTogglePreview(e, false)}
+            disabled={isLoadingPreview}
+            title={
+              isPlayingThis
+                ? 'Click to stop preview'
+                : isCached
+                ? 'Play saved preview (Cached • Instant)'
+                : 'Generate & listen to voice sample'
+            }
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-medium transition-all ${
+              isPlayingThis
+                ? 'bg-teal-500 text-black font-bold shadow-md shadow-teal-500/40 ring-1 ring-teal-300 animate-pulse'
+                : isCached
+                ? 'bg-[#181820] hover:bg-[#22222E] text-teal-300 border border-teal-800/50 hover:border-teal-500/60'
+                : 'bg-[#1A1A22] hover:bg-[#22222C] text-gray-300 border border-[#2C2C38] hover:text-white'
+            }`}
+          >
+            {isLoadingPreview ? (
+              <>
+                <Loader2 className="w-3 h-3 animate-spin text-teal-400" />
+                <span>Loading...</span>
+              </>
+            ) : isPlayingThis ? (
+              <>
+                <Square className="w-2.5 h-2.5 fill-black text-black" />
+                <span>Playing...</span>
+                <span className="flex items-center gap-0.5 ml-0.5">
+                  <span className="w-1 h-2 bg-black rounded-full animate-bounce"></span>
+                  <span className="w-1 h-3 bg-black rounded-full animate-bounce [animation-delay:0.15s]"></span>
+                  <span className="w-1 h-2 bg-black rounded-full animate-bounce [animation-delay:0.3s]"></span>
                 </span>
-              )}
-            </>
-          )}
-        </button>
+              </>
+            ) : (
+              <>
+                <Play className="w-2.5 h-2.5 fill-current" />
+                <span>Preview</span>
+                {isCached && (
+                  <span className="text-[7px] font-mono text-teal-400 ml-0.5 opacity-90" title="Ready in cache">
+                    ●
+                  </span>
+                )}
+              </>
+            )}
+          </button>
+        </div>
       </div>
     </div>
   );
