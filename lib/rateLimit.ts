@@ -1,6 +1,11 @@
 /**
- * Model-specific RPM (Requests Per Minute) Rate Limiter.
- * Strictly limits API generation & preview requests to 2 RPM per model with a 1-minute window.
+ * Rate Limiter for Gemini TTS API.
+ * Rules:
+ * - Exactly 2 requests allowed per 60-second window per model.
+ * - 1st request starts the 60-second window (0/2 -> 1/2 used).
+ * - 2nd request within that 60s window is allowed (1/2 -> 2/2 used).
+ * - 3rd request within that 60s window is BLOCKED with the remaining cooldown seconds.
+ * - Once the 60s window expires, quota automatically resets to 0/2 used.
  */
 
 interface RateLimitBucket {
@@ -21,13 +26,6 @@ export interface RateLimitCheckResult {
   resetTimeMs: number;
 }
 
-/**
- * Checks and registers a request for a specific model.
- * - 1st request starts the 60-second window.
- * - 2nd request is allowed within that 60-second window.
- * - 3rd request within the 60-second window is BLOCKED until the window expires.
- * - After 60 seconds, the window auto-resets to 0 used.
- */
 export function checkModelRateLimit(
   modelId: string = 'gemini-2.5-flash-preview-tts',
   recordUsage: boolean = true
@@ -36,20 +34,25 @@ export function checkModelRateLimit(
   const normalizedModel = modelId || 'gemini-2.5-flash-preview-tts';
 
   let bucket = modelBuckets.get(normalizedModel);
-  if (!bucket || now - bucket.windowStart >= WINDOW_MS) {
-    // Window expired or not started yet -> auto reset
+  if (!bucket) {
     bucket = { windowStart: 0, requestCount: 0 };
     modelBuckets.set(normalizedModel, bucket);
   }
 
-  // Calculate window remaining time
+  // Check if current 60s window has expired
+  if (bucket.windowStart > 0 && now - bucket.windowStart >= WINDOW_MS) {
+    // 60s window has completed -> reset to 0 used
+    bucket.windowStart = 0;
+    bucket.requestCount = 0;
+  }
+
   const isWindowActive = bucket.windowStart > 0 && now - bucket.windowStart < WINDOW_MS;
   const resetTimeMs = isWindowActive ? bucket.windowStart + WINDOW_MS : now;
   const windowSecondsRemaining = isWindowActive
     ? Math.max(0, Math.ceil((resetTimeMs - now) / 1000))
     : 0;
 
-  // If already used 2 requests in this 1-minute window, block
+  // If 2 requests have already been used in the active window, block 3rd request
   if (isWindowActive && bucket.requestCount >= RPM_LIMIT) {
     return {
       allowed: false,
@@ -62,12 +65,12 @@ export function checkModelRateLimit(
   }
 
   if (recordUsage) {
-    if (!isWindowActive) {
-      // 1st request starts the 60s countdown window
+    if (!isWindowActive || bucket.windowStart === 0) {
+      // 1st request -> start the 60s window
       bucket.windowStart = now;
       bucket.requestCount = 1;
     } else {
-      // 2nd request in active window
+      // 2nd request in the active window
       bucket.requestCount += 1;
     }
   }

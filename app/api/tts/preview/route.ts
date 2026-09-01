@@ -95,7 +95,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const targetModel = model || 'gemini-3.1-flash-tts-preview';
+    const targetModel = model || 'gemini-2.5-flash-preview-tts';
 
     // ── Enforce 2 RPM Limit on Live Preview Generation ────────────────────────
     const rateCheck = checkModelRateLimit(targetModel, true);

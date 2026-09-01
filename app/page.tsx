@@ -497,7 +497,7 @@ export default function Home() {
                 ? 'bg-rose-950/40 border-rose-500/50 text-rose-300 animate-pulse'
                 : usedCount === 1
                 ? 'bg-amber-950/30 border-amber-500/40 text-amber-300'
-                : 'bg-[#14141C] border-[#262632] text-teal-400'
+                : 'bg-teal-950/30 border-teal-500/40 text-teal-300'
             }`}
             title="Max 2 generations per 1-minute window"
           >
@@ -506,8 +506,8 @@ export default function Home() {
               {isBlocked
                 ? `2/2 Used • Cooldown: ${windowSecondsRemaining}s`
                 : usedCount === 1
-                ? `1/2 Used • Resets in ${windowSecondsRemaining}s`
-                : '2/2 Generations Available'}
+                ? `1/2 Used • Window: ${windowSecondsRemaining}s`
+                : '0/2 Used • 2 Ready'}
             </span>
           </div>
 
