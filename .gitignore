@@ -9,3 +9,7 @@ coverage/
 # Local data & lock files
 data/
 package-lock.json
+
+# Electron build output
+dist/
+out/

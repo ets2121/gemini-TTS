@@ -1,6 +1,7 @@
 import type {Metadata} from 'next';
 import './globals.css'; // Global styles
 import { ToastProvider } from '@/components/ToastManager';
+import { ElectronSettings } from '@/components/ElectronSettings';
 
 export const metadata: Metadata = {
   title: 'Text to Speech Studio - AI Voice Synthesis & SQLite Storage',
@@ -12,6 +13,7 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
     <html lang="en" className="dark">
       <body className="bg-[#0A0A0C] text-[#E2E2E2] antialiased selection:bg-teal-600/30 selection:text-teal-200" suppressHydrationWarning>
         <ToastProvider>{children}</ToastProvider>
+        <ElectronSettings />
       </body>
     </html>
   );

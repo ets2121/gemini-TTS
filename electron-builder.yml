@@ -1,0 +1,52 @@
+appId: com.ets2121.gemini-tts
+productName: Gemini TTS Studio
+copyright: Copyright © 2024
+
+# ─── Directories ──────────────────────────────────────────────────────────────
+directories:
+  output: dist
+  buildResources: build-resources
+
+# ─── Files bundled into the Electron app (main process only) ─────────────────
+# Next.js lives in extraResources/nextjs-app — not here.
+# After `npm install --production`, node_modules only contains electron-updater.
+files:
+  - electron/**
+  - package.json
+  - node_modules/**
+
+# ─── Extra resources (Next.js standalone server) ──────────────────────────────
+# Copied to resources/nextjs-app/ in the packaged app.
+# electron/main.js references this path via process.resourcesPath.
+extraResources:
+  - from: .next/standalone
+    to: nextjs-app
+    filter:
+      - "**/*"
+      - "!**/*.map"
+
+# ─── Windows target ───────────────────────────────────────────────────────────
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: "Gemini TTS Studio"
+  # Preserve user data (AppData) on uninstall
+  deleteAppDataOnUninstall: false
+
+# ─── Auto-update publisher (GitHub Releases) ──────────────────────────────────
+# Set GH_TOKEN env var when running electron:build to publish a draft release.
+publish:
+  provider: github
+  owner: ets2121
+  repo: gemini-TTS
+  releaseType: release
+  publishAutoUpdate: true

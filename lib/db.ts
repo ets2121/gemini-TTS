@@ -1,7 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 
-const DB_DIR = path.join(process.cwd(), 'data');
+// When running inside Electron, use the writable user-data path injected by main.js.
+// Falls back to process.cwd()/data for normal Next.js dev/production use.
+const DB_DIR = process.env.ELECTRON_USER_DATA
+  ? path.join(process.env.ELECTRON_USER_DATA, 'data')
+  : path.join(process.cwd(), 'data');
 const DATA_FILE = path.join(DB_DIR, 'tts_history.json');
 const PRESETS_FILE = path.join(DB_DIR, 'voice_presets.json');
 
