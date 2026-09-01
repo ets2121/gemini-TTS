@@ -53,11 +53,11 @@ const TTS_MODELS: ModelOption[] = [
     speed: '~180ms',
   },
   {
-    id: 'gemini-3.1-flash-tts-hq',
-    name: 'Gemini 3.1 Flash Studio Master',
-    badge: 'High-Fidelity 24kHz',
-    description: 'High-detail 24kHz linear PCM vocal mastering',
-    speed: '~240ms',
+    id: 'gemini-2.5-flash-preview-tts',
+    name: 'Gemini 2.5 Flash TTS',
+    badge: 'Fast & Natural Synthesis',
+    description: 'High-speed natural vocal synthesis and clear articulation',
+    speed: '~120ms',
   },
 ];
 
