@@ -66,7 +66,7 @@ export default function Home() {
 
   // Main Studio State
   const [text, setText] = useState<string>(
-    'Welcome to SpeechCraft Studio. Type any sentence, customize the vocal style, and generate studio-grade audio saved directly to your SQLite database.'
+    'Welcome to AI TTS Generator. Type any sentence, customize the vocal style, and generate studio-grade audio saved directly to your local library.'
   );
 
   const [selectedVoice, setSelectedVoice] = useState<VoiceOption>(VOICES[0]); // Kore (Female)
@@ -440,14 +440,14 @@ export default function Home() {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-sm font-bold tracking-tight text-[#E2E2E2]">
-                SpeechCraft Studio
+                AI TTS Generator
               </h1>
               <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full bg-teal-950/80 text-teal-300 border border-teal-800/80">
                 TTS 3.1 & 2.5
               </span>
             </div>
             <p className="text-[11px] text-gray-400">
-              Neural Voice Synthesis • Audio Previews • Style Directives • SQLite Database
+              Neural Voice Synthesis • Audio Previews • Style Directives • History Storage
             </p>
           </div>
         </div>
@@ -492,15 +492,15 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Main Workspace Layout */}
-      <div className="relative z-10 flex-1 max-w-7xl w-full mx-auto p-4 lg:p-6 transition-all duration-300">
+      {/* Main Workspace Layout (Full width & fluid responsive) */}
+      <div className="relative z-10 flex-1 w-full max-w-[1920px] mx-auto px-4 sm:px-6 lg:px-8 py-4 lg:py-6 transition-all duration-300">
         <div
           className={`grid grid-cols-1 gap-6 items-start transition-all duration-300 ${
-            isHistoryOpen ? 'lg:grid-cols-12' : 'lg:grid-cols-1 max-w-5xl mx-auto'
+            isHistoryOpen ? 'lg:grid-cols-12 xl:grid-cols-12' : 'max-w-6xl mx-auto w-full'
           }`}
         >
           {/* TTS Generation Workstation */}
-          <div className={`${isHistoryOpen ? 'lg:col-span-8' : 'w-full'} space-y-4`}>
+          <div className={`${isHistoryOpen ? 'lg:col-span-7 xl:col-span-8 2xl:col-span-9' : 'w-full'} min-w-0 space-y-4`}>
             {/* Compact Model Selection (Smaller Cards for Clean View) */}
             <div className="p-3.5 rounded-xl bg-[#121216] border border-[#26262E] shadow-lg space-y-2.5">
               <div className="flex items-center justify-between">
@@ -750,7 +750,13 @@ export default function Home() {
               </div>
 
               {/* Grid of Voices with Gender Badges & Preview Buttons */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 max-h-[380px] overflow-y-auto pr-1 custom-scrollbar">
+              <div
+                className={`grid gap-2.5 max-h-[380px] overflow-y-auto pr-1 custom-scrollbar ${
+                  isHistoryOpen
+                    ? 'grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4'
+                    : 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4'
+                }`}
+              >
                 {filteredVoices.length === 0 ? (
                   <div className="col-span-full py-8 text-center text-xs text-gray-500">
                     No voices match &quot;{voiceSearchQuery}&quot;.
@@ -919,9 +925,9 @@ export default function Home() {
             )}
           </div>
 
-          {/* SQLite Database Storage & Library (Shown when expanded) */}
+          {/* History Storage & Library (Fixed/Sticky on desktop, only internal content scrolls) */}
           {isHistoryOpen && (
-            <div className="lg:col-span-4 h-full animate-in fade-in slide-in-from-right-4 duration-200">
+            <div className="lg:col-span-5 xl:col-span-4 2xl:col-span-3 min-w-0 lg:sticky lg:top-20 h-fit max-h-[calc(100vh-6rem)] animate-in fade-in slide-in-from-right-4 duration-200">
               <HistoryDrawer
                 items={historyItems}
                 stats={historyStats}

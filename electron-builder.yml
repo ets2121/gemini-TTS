@@ -1,5 +1,5 @@
-appId: com.ets2121.gemini-tts
-productName: Gemini TTS Studio
+appId: com.ets2121.ai-tts-generator
+productName: AI TTS Generator
 copyright: Copyright © 2024
 
 # ─── Directories ──────────────────────────────────────────────────────────────
@@ -38,7 +38,7 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: "Gemini TTS Studio"
+  shortcutName: "AI TTS Generator"
   # Preserve user data (AppData) on uninstall
   deleteAppDataOnUninstall: false
 

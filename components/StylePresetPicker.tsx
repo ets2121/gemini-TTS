@@ -444,7 +444,7 @@ export const StylePresetPicker: React.FC<StylePresetPickerProps> = ({
           </div>
 
           {/* Clean Style Preset Cards Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-[260px] overflow-y-auto pr-1 custom-scrollbar pt-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4 gap-2 max-h-[260px] overflow-y-auto pr-1 custom-scrollbar pt-1">
             {filteredStyles.length === 0 ? (
               <div className="col-span-full py-6 text-center text-xs text-gray-500 bg-[#121216] rounded-xl border border-[#222228]">
                 No styles found matching &quot;{searchQuery}&quot;.

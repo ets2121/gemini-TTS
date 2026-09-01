@@ -146,7 +146,7 @@ function createWindow(port) {
     minHeight: 620,
     backgroundColor: '#0A0A0C',
     show: false,
-    title: 'Gemini TTS Studio',
+    title: 'AI TTS Generator',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -275,7 +275,7 @@ app.whenReady().then(async () => {
     console.error('[App] Fatal startup error:', err);
     dialog.showErrorBox(
       'Startup Error',
-      `Gemini TTS Studio failed to start:\n\n${err.message}`
+      `AI TTS Generator failed to start:\n\n${err.message}`
     );
     app.quit();
   }

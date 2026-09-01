@@ -141,7 +141,7 @@ export function ElectronSettings() {
                   </h2>
                   {version && (
                     <p className="text-[11px] text-zinc-500 mt-0.5">
-                      Gemini TTS Studio&nbsp;v{version}
+                      AI TTS Generator&nbsp;v{version}
                     </p>
                   )}
                 </div>

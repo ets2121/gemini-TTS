@@ -4,8 +4,8 @@ import { ToastProvider } from '@/components/ToastManager';
 import { ElectronSettings } from '@/components/ElectronSettings';
 
 export const metadata: Metadata = {
-  title: 'Text to Speech Studio - AI Voice Synthesis & SQLite Storage',
-  description: 'Dark-mode Text to Speech studio with voice styles, audio waveform visualizer, audio downloads, and SQLite history storage.',
+  title: 'AI TTS Generator - Voice Synthesis & Storage',
+  description: 'AI Text to Speech Generator with neural voice styles, waveform visualizer, audio downloads, and persistent history storage.',
 };
 
 export default function RootLayout({children}: {children: React.ReactNode}) {

@@ -17,7 +17,7 @@ $root = Split-Path -Parent $PSScriptRoot   # project root
 
 Write-Host ""
 Write-Host "══════════════════════════════════════════════════" -ForegroundColor Cyan
-Write-Host "  Gemini TTS Studio — Electron Build Pipeline" -ForegroundColor Cyan
+Write-Host "  AI TTS Generator — Electron Build Pipeline" -ForegroundColor Cyan
 Write-Host "══════════════════════════════════════════════════" -ForegroundColor Cyan
 Write-Host ""
 

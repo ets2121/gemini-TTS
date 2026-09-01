@@ -184,7 +184,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
   return (
     <div
       id="sqlite-history-section"
-      className="p-5 sm:p-6 rounded-2xl bg-[#0D0D12] border border-[#222228] shadow-2xl space-y-4 flex flex-col h-full"
+      className="p-5 sm:p-6 rounded-2xl bg-[#0D0D12] border border-[#222228] shadow-2xl space-y-4 flex flex-col max-h-[calc(100vh-6.5rem)] overflow-hidden"
     >
       {/* Header & SQLite Stats */}
       <div className="space-y-3">
@@ -339,7 +339,7 @@ export const HistoryDrawer: React.FC<HistoryDrawerProps> = ({
       </div>
 
       {/* History Items Scrollable List */}
-      <div className="flex-1 overflow-y-auto space-y-2.5 pr-1 min-h-[220px] max-h-[480px] custom-scrollbar">
+      <div className="flex-1 overflow-y-auto space-y-2.5 pr-1.5 min-h-[200px] custom-scrollbar">
         {isLoading ? (
           <div className="py-12 text-center text-xs text-gray-500 font-mono flex items-center justify-center gap-2">
             <span className="w-2 h-2 rounded-full bg-teal-500 animate-ping"></span>

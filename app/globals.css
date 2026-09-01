@@ -1,19 +1,61 @@
 @import "tailwindcss";
 
-/* Custom dark scrollbar styling */
+/* Modern, ultra-sleek custom scrollbars for webkit & firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(63, 63, 70, 0.4) transparent;
+}
+
+/* Chrome, Edge, Safari */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(63, 63, 70, 0.45);
+  border-radius: 9999px;
+  border: 1.5px solid transparent;
+  background-clip: padding-box;
+  transition: background-color 0.2s ease, border 0.2s ease;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(13, 148, 136, 0.8); /* teal-600 */
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: rgba(20, 184, 166, 1); /* teal-500 */
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Explicit class for elements with customized scrolling */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(63, 63, 70, 0.5) transparent;
+}
+
 .custom-scrollbar::-webkit-scrollbar {
   width: 5px;
   height: 5px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
-  background: rgba(13, 13, 16, 0.8);
+  background: rgba(18, 18, 22, 0.6);
   border-radius: 9999px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #2A2A30;
+  background: rgba(82, 82, 91, 0.55);
   border-radius: 9999px;
+  transition: background-color 0.2s ease;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {

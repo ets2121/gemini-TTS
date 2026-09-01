@@ -23,7 +23,7 @@ export const DEFAULT_PREFERENCES: TTSUserPreferences = {
   speed: 1.0,
   autoPlay: true,
   downloadFormat: 'mp3',
-  lastTextDraft: 'Welcome to SpeechCraft Studio. Type any sentence, customize the vocal style, and generate studio-grade audio saved directly to your SQLite database.',
+  lastTextDraft: 'Welcome to AI TTS Generator. Type any sentence, customize the vocal style, and generate studio-grade audio saved directly to your local library.',
 };
 
 export function loadUserPreferences(): TTSUserPreferences {
